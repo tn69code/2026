@@ -70,7 +70,7 @@ ENVF="/etc/zivpn/web.env"
 TEMPLATES_DIR="/etc/zivpn/templates" 
 mkdir -p /etc/zivpn "$TEMPLATES_DIR" 
 
-# --- ZIVPN Binary, Config, Certs, Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (UNCHANGED SECTIONS) ---
+# --- ZIVPN Binary, Config, Certs (UNCHANGED) ---
 echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
 PRIMARY_URL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
 FALLBACK_URL="https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64"
@@ -94,10 +94,16 @@ if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
 
+# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (MODIFIED) ---
 echo -e "${G}🔒 Web Admin Login UI ထည့်မလား? (လစ်: မဖိတ်)${Z}"
 read -r -p "Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
   read -r -s -p "Web Admin Password: " WEB_PASS; echo
+  
+  # 💡 NEW: Contact Link ကို မေးမြန်းခြင်း
+  echo -e "${G}🔗 Login အောက်နားတွင် ပြသရန် ဆက်သွယ်ရန် Link (Optional)${Z}"
+  read -r -p "Contact Link (ဥပမာ: https://t.me/yourid or Enter=disable): " CONTACT_LINK
+  
   if command -v openssl >/dev/null 2>&1; then
     WEB_SECRET="$(openssl rand -hex 32)"
   else
@@ -110,6 +116,8 @@ PY_SECRET
     echo "WEB_ADMIN_USER=${WEB_USER}"
     echo "WEB_ADMIN_PASSWORD=${WEB_PASS}"
     echo "WEB_SECRET=${WEB_SECRET}"
+    # 💡 NEW: Contact Link ကို web.env ထဲသို့ ထည့်ခြင်း
+    echo "WEB_CONTACT_LINK=${CONTACT_LINK:-}" 
   } > "$ENVF"
   chmod 600 "$ENVF"
   echo -e "${G}✅ Web login UI ဖွင့်ထားပါတယ်${Z}"
@@ -162,7 +170,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 Mobile Friendly: users_table.html (MODIFIED for Status FIX + Password Edit + NEW MODAL UI - MAX-WIDTH Reduced + Close Btn FIX + **DAYS REMAINING**)
+# 💡 Mobile Friendly: users_table.html (UNCHANGED)
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -422,7 +430,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 </script>
 TABLE_HTML
 
-# 💡 Mobile Friendly: users_table_wrapper.html (Only CSS added to support modal changes - no major structure change)
+# 💡 Mobile Friendly: users_table_wrapper.html (UNCHANGED)
 echo -e "${Y}📄 Table Wrapper (users_table_wrapper.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
 <!doctype html>
@@ -713,7 +721,7 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED for precise expiration logic AND MYANMAR CHAR CHECK + **DAYS REMAINING CALCULATION** + **FIXED REDIRECT FOR /EDIT**)
+# 💡 Web Panel (Flask - web.py) (MODIFIED: HTML Template & ENV Variable read)
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -736,8 +744,10 @@ def get_server_ip():
     return "127.0.0.1" 
 
 SERVER_IP_FALLBACK = get_server_ip()
+# 💡 NEW: Contact Link ကို Environment ကနေ ယူခြင်း
+CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML Template အဓိကဖိုင် (MODIFIED: Add Contact Link)
+# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
@@ -973,19 +983,20 @@ text {
   font-size: 15px;
   margin-Top: 0px;
 }
-
-/* 💡 NEW STYLE for Contact Link */
+/* 💡 NEW: Contact Link Style */
 .contact-link {
-    display: block;
-    margin-top: 20px; 
+    margin-top: 15px;
     font-size: 0.9em;
-    color: var(--primary);
+    font-weight: 500;
+}
+.contact-link a {
+    color: var(--primary-dark);
     text-decoration: none;
     font-weight: bold;
     transition: color 0.2s;
 }
-.contact-link:hover {
-    color: var(--primary-dark);
+.contact-link a:hover {
+    color: var(--primary);
     text-decoration: underline;
 }
 
@@ -1072,11 +1083,10 @@ text {
             <button type="submit" class="login-button">Login</button>
         </form>
         
-        {# 💡 NEW LINK: ဆက်သွယ်ရန် #}
-        <a href="https://t.me/your_telegram_id" target="_blank" class="contact-link">
-            <i class="icon">💬</i> ဆက်သွယ်ရန်
-        </a>
-        
+        {# 💡 NEW: Contact Link ကို ဒီမှာ ထည့်သွင်းပြသခြင်း #}
+        {% if contact_link %}
+        <p class="contact-link"><i class="icon">📞</i> ဆက်သွယ်ရန် : <a href="{{ contact_link }}" target="_blank">Admin ကို ဆက်သွယ်ပါ</a></p>
+        {% endif %}
     </div>
 {% else %}
 
@@ -1401,7 +1411,8 @@ def index():
                                 authed=False, 
                                 logo=LOGO_URL, 
                                 err=session.pop("login_err", None),
-                                IP=server_ip) 
+                                IP=server_ip,
+                                contact_link=CONTACT_LINK) # 💡 Added Contact Link
     
     # Run expiration check and get the total count
     check_user_expiration()
@@ -1450,7 +1461,12 @@ def login():
       session["login_err"]="❌ Username သို့မဟုတ် Password မှားယွင်းနေပါသည်။ ထပ်မံစစ်ဆေးပါ။" 
       return redirect(url_for('login'))
   # GET
-  return render_template_string(HTML, authed=False, logo=LOGO_URL, err=session.pop("login_err", None), IP=SERVER_IP_FALLBACK)
+  return render_template_string(HTML, 
+                                authed=False, 
+                                logo=LOGO_URL, 
+                                err=session.pop("login_err", None), 
+                                IP=SERVER_IP_FALLBACK,
+                                contact_link=CONTACT_LINK) # 💡 Added Contact Link
 
 @app.route("/logout", methods=["GET"])
 def logout():
