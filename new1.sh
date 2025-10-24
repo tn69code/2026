@@ -90,19 +90,19 @@ fi
 if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
   echo -e "${Y}🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်...${Z}"
   openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
-    -subj "/C=MM/ST=Yangon/L=Yangon/O=UPK/OU=Net/CN=zivpn" \
+    -subj "/C=MM/ST=Yangon/L=Yangon/O=M-69P/OU=Net/CN=zivpn" \
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
 
 # --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (MODIFIED) ---
-echo -e "${G}🔒 Web Admin Login UI ထည့်မလား? (လစ်: မဖိတ်)${Z}"
+echo -e "${G}🔒 Web Admin Login UI ထည့်မလား..?${Z}"
 read -r -p "Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
   read -r -s -p "Web Admin Password: " WEB_PASS; echo
   
   # 💡 NEW: Contact Link ကို မေးမြန်းခြင်း
   echo -e "${G}🔗 Login အောက်နားတွင် ပြသရန် ဆက်သွယ်ရန် Link (Optional)${Z}"
-  read -r -p "Contact Link (ဥပမာ: https://t.me/yourid or Enter=disable): " CONTACT_LINK
+  read -r -p "Contact Link (ဥပမာ: https://m.me/taknds69 or Enter=disable): " CONTACT_LINK
   
   if command -v openssl >/dev/null 2>&1; then
     WEB_SECRET="$(openssl rand -hex 32)"
@@ -1085,7 +1085,7 @@ text {
         
         {# 💡 NEW: Contact Link ကို ဒီမှာ ထည့်သွင်းပြသခြင်း #}
         {% if contact_link %}
-        <p class="contact-link"><i class="icon">📞</i> ဆက်သွယ်ရန် : <a href="{{ contact_link }}" target="_blank">Admin ကို ဆက်သွယ်ပါ</a></p>
+        <p class="contact-link"><i class="icon">🗨️</i><a href="{{ contact_link }}" target="_blank">Admin ကို ဆက်သွယ်ပါ</a></p>
         {% endif %}
     </div>
 {% else %}
