@@ -737,7 +737,7 @@ def get_server_ip():
 
 SERVER_IP_FALLBACK = get_server_ip()
 
-# 💡 HTML Template အဓိကဖိုင် (UNCHANGED)
+# 💡 HTML Template အဓိကဖိုင် (MODIFIED: Add Contact Link)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
@@ -974,6 +974,21 @@ text {
   margin-Top: 0px;
 }
 
+/* 💡 NEW STYLE for Contact Link */
+.contact-link {
+    display: block;
+    margin-top: 20px; 
+    font-size: 0.9em;
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: bold;
+    transition: color 0.2s;
+}
+.contact-link:hover {
+    color: var(--primary-dark);
+    text-decoration: underline;
+}
+
 </style>
 <script>
     // 💡 ULTIMATE FIX: JavaScript function for copy-to-clipboard with Fallback (Re-applied)
@@ -1056,6 +1071,12 @@ text {
             </div>
             <button type="submit" class="login-button">Login</button>
         </form>
+        
+        {# 💡 NEW LINK: ဆက်သွယ်ရန် #}
+        <a href="https://t.me/your_telegram_id" target="_blank" class="contact-link">
+            <i class="icon">💬</i> ဆက်သွယ်ရန်
+        </a>
+        
     </div>
 {% else %}
 
