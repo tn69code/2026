@@ -4,6 +4,7 @@
 CONFIG_DIR="/etc/agnudp"
 WEB_DIR="/var/www/agnudp"
 USERS_FILE="$CONFIG_DIR/users.json"
+CONFIG_FILE="$CONFIG_DIR/config.json"
 SERVICE_NAME="agnudp-web"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 WEB_PORT=8080
@@ -18,13 +19,33 @@ error() {
 }
 
 # ----------------------------------------------------
-# 1. Create Python Flask Application (app.py) - Syntax Fix
+# 1. Environment & Permission Fixes
+# ----------------------------------------------------
+
+fix_permissions() {
+    log "Fixing file permissions and installing core dependencies..."
+    
+    # Force re-install core Python dependencies (if they were missing or corrupted)
+    pip3 install --upgrade flask flask-cors || error "Failed to install Python dependencies."
+
+    # Set correct permissions for config files (CRITICAL for Internal Server Error)
+    sudo chmod 700 "$CONFIG_DIR"
+    sudo chmod 600 "$CONFIG_FILE"
+    sudo chmod 600 "$USERS_FILE"
+    
+    # Set web directory permissions
+    sudo chmod -R 755 "$WEB_DIR"
+}
+
+# ----------------------------------------------------
+# 2. Create Python Flask Application (app.py) - Cleaned up and Fixed
 # ----------------------------------------------------
 
 create_app_py() {
-    log "Creating Flask application script ($WEB_DIR/app.py) with final fixes..."
-    # Writing the Python file with correct indentation and Jinja2 fix
-    cat > "$WEB_DIR/app.py" << 'EOF'
+    log "Overwriting app.py with fully fixed code (Jinja2 Fix and Load Data Error Handling)..."
+    
+    # Writing the clean Python file with correct indentation and improved error handling
+    sudo cat > "$WEB_DIR/app.py" << 'EOF'
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
 import json
@@ -38,7 +59,7 @@ USERS_FILE = os.path.join(CONFIG_DIR, "users.json")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # --- Flask App Initialization (JINJA2 FIX) ---
-# Customizing Jinja2 to change default delimiters from {{ }} to [[ ]] 
+# Changes Jinja2 delimiters from {{ }} to [[ ]] to avoid conflict with Vue.js
 class CustomFlask(Flask):
     jinja_options = Flask.jinja_options.copy()
     jinja_options.update(dict(
@@ -50,19 +71,28 @@ app = CustomFlask(__name__, template_folder='templates')
 CORS(app)
 app.secret_key = os.urandom(24) 
 
-# Load configuration and user data
+# Load configuration and user data (Enhanced CRITICAL FUNCTION for 500 Error)
 def load_data():
+    config = {}
+    users = []
+    
+    # 1. Load Config (Default if file not found or invalid)
     try:
         with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading config: {e}. Using defaults.")
+        config = {"admin_username": "admin", "admin_password": "admin123"}
+        
+    # 2. Load Users (Default if file not found or invalid)
+    try:
         with open(USERS_FILE, 'r') as f:
             users = json.load(f)
-        return config, users
-    except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
-        print(f"Error loading data: {e}. Falling back to defaults.")
-        config = {"admin_username": "admin", "admin_password": "admin123"}
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading users: {e}. Using safe fallback list.")
         users = [{"id": 1, "username": "user1", "password": "password123", "data_limit": 10240, "used_data": 0, "active": True}]
-        return config, users
+
+    return config, users
 
 def save_users(users):
     try:
@@ -79,6 +109,7 @@ def check_auth():
 
 @app.route('/')
 def index():
+    # Only render template, actual data load happens via API call after login
     return render_template('index.html')
 
 @app.route('/api/login', methods=['POST'])
@@ -90,7 +121,7 @@ def login():
         return jsonify(success=True)
     return jsonify(success=False), 401
 
-# --- API Endpoints ---
+# --- API Endpoints (The rest of the code remains the same but with clean indentation) ---
 @app.route('/api/dashboard')
 def dashboard():
     if not check_auth():
@@ -195,13 +226,14 @@ EOF
 }
 
 # ----------------------------------------------------
-# 2. Create HTML Template (index.html) - Delimiter Fix
+# 3. Create HTML Template (index.html)
 # ----------------------------------------------------
 
 create_index_html() {
-    log "Creating HTML template (index.html) with Jinja2 delimiter fix..."
-    # The new code for index.html from the previous step which uses [[ ]] for Jinja2
-    cat > "$WEB_DIR/templates/index.html" << 'EOF'
+    log "Overwriting index.html to ensure Jinja2/Vue.js delimiters are correct..."
+    
+    # This HTML file is correct and uses [[ ]] for Jinja2 and {{ }} for Vue.js
+    sudo cat > "$WEB_DIR/templates/index.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -531,26 +563,29 @@ EOF
 }
 
 # ----------------------------------------------------
-# 3. Service Restart
+# 4. Service Start/Check
 # ----------------------------------------------------
 
 start_service() {
-    log "Restarting $SERVICE_NAME service..."
+    log "Performing final service restart..."
     
-    # Reload daemon to ensure systemd picks up any changes (though service file is assumed to be okay)
+    # Ensure daemon is reloaded
     sudo systemctl daemon-reload
 
-    # Stop any failed attempts and start fresh
+    # Stop and start service
     sudo systemctl stop "$SERVICE_NAME"
-    sudo systemctl start "$SERVICE_NAME" || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
+    sudo systemctl start "$SERVICE_NAME" || error "Service failed to start. Check logs with 'journalctl -u $SERVICE_NAME -f'"
 
-    log "Service should now be running. Please check: http://185.84.160.65:8080"
+    log "Installation/Fix completed successfully! 🎉"
     log "----------------------------------------------------"
-    log "Check service status: sudo systemctl status $SERVICE_NAME"
+    log "Web Panel URL: http://185.84.160.65:$WEB_PORT"
+    log "Service Status: active (running) ဖြစ်သင့်ပါတယ်"
+    log "----------------------------------------------------"
+    log "Final Status Check: sudo systemctl status $SERVICE_NAME"
 }
 
 # --- Execute All Steps ---
-# Rerun file creation to fix any encoding/indentation errors
+fix_permissions
 create_app_py
 create_index_html
 start_service
