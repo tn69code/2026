@@ -30,6 +30,7 @@ prepare_system() {
     log "Starting AGN-UDP Web Manager final installation..."
 
     log "Installing/Upgrading Python dependencies (flask, flask-cors)..."
+    # Ensure update is quiet to focus on main installation
     apt update -qq
     apt install -y python3 python3-pip || error "Failed to install python3 and pip."
     pip3 install --upgrade flask flask-cors || error "Failed to install Python dependencies."
@@ -73,12 +74,12 @@ EOF
 }
 
 # ----------------------------------------------------
-# 3. Create Python Flask Application (app.py) (WITH JINJA2 FIX)
+# 3. Create Python Flask Application (app.py) - Syntax Fix
 # ----------------------------------------------------
 
 create_app_py() {
-    log "Creating Flask application script ($WEB_DIR/app.py) with custom Jinja2 delimiters..."
-    # Writing the Python file with correct Class definition to fix Jinja2/Vue conflict
+    log "Creating Flask application script ($WEB_DIR/app.py) with custom Jinja2 delimiters and fixed Python Syntax..."
+    # The 'CustomFlask' class ensures Jinja2 treats Vue.js's {{ }} as literal text.
     cat > "$WEB_DIR/app.py" << 'EOF'
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
@@ -94,17 +95,17 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # --- Flask App Initialization (JINJA2 FIX) ---
 # Customizing Jinja2 to change default delimiters from {{ }} to [[ ]] 
-# This prevents the conflict with Vue.js expressions (e.g., {{ user.active ? 'Active' : 'Inactive' }})
+# This prevents the initial TemplateSyntaxError.
 class CustomFlask(Flask):
     jinja_options = Flask.jinja_options.copy()
     jinja_options.update(dict(
-        variable_start_string='[[',  # Jinja2 variables use [[ ]]
+        variable_start_string='[[',
         variable_end_string=']]',
     ))
 
 app = CustomFlask(__name__, template_folder='templates')
 CORS(app)
-app.secret_key = os.urandom(24) # Required for sessions
+app.secret_key = os.urandom(24) 
 
 # Load configuration and user data
 def load_data():
@@ -116,7 +117,6 @@ def load_data():
         return config, users
     except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
         print(f"Error loading data: {e}. Falling back to defaults.")
-        # Fallback to hardcoded safe defaults if files are corrupted or missing
         config = {"admin_username": "admin", "admin_password": "admin123"}
         users = [{"id": 1, "username": "user1", "password": "password123", "data_limit": 10240, "used_data": 0, "active": True}]
         return config, users
@@ -158,7 +158,7 @@ def dashboard():
     active_users = sum(1 for u in users if u['active'])
     
     try:
-        # Check the main AGN-UDP service status (Assuming the service name is 'agnudp')
+        # Check the main AGN-UDP service status (If your main VPN service is not 'agnudp', change this)
         status_output = subprocess.check_output(['systemctl', 'is-active', 'agnudp'], universal_newlines=True).strip()
         service_status = 'active' if status_output == 'active' else 'inactive'
     except Exception:
@@ -247,17 +247,19 @@ def restart_service():
 
 # --- Run App ---
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=$WEB_PORT, debug=False)
+    # Define the port here
+    WEB_PORT = 8080 
+    app.run(host='0.0.0.0', port=WEB_PORT, debug=False)
 EOF
 }
 
 # ----------------------------------------------------
-# 4. Create HTML Template (index.html) (JINJA2 DELIMITER FIX)
+# 4. Create HTML Template (index.html) - Delimiter Fix
 # ----------------------------------------------------
 
 create_index_html() {
     log "Creating HTML template ($WEB_DIR/templates/index.html) using new Jinja2 delimiters [[ ]]..."
-    # All Jinja2 expressions are now [[ ]]. Vue.js expressions remain {{ }}
+    # All Jinja2 expressions are now [[ ]]. Vue.js expressions remain {{ }} for ternary operator.
     cat > "$WEB_DIR/templates/index.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -593,6 +595,7 @@ EOF
 
 start_service() {
     log "Creating systemd service file ($SERVICE_FILE)..."
+    # Ensure the service file is correct
     cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=AGN-UDP Web Interface
@@ -612,9 +615,13 @@ WantedBy=multi-user.target
 EOF
 
     log "Enabling and starting $SERVICE_NAME service..."
+    # Reload and restart service to pick up new app.py
     systemctl daemon-reload
     systemctl enable "$SERVICE_NAME"
-    systemctl restart "$SERVICE_NAME" || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
+
+    # Stop any failed attempts and start fresh
+    systemctl stop "$SERVICE_NAME"
+    systemctl start "$SERVICE_NAME" || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
 
     log "Installation completed successfully! 🎉"
     log "----------------------------------------------------"
@@ -622,6 +629,8 @@ EOF
     log "Default Username: admin"
     log "Default Password: admin123"
     log "----------------------------------------------------"
+    log "Service Status Check: systemctl status $SERVICE_NAME"
+    log "Error Log Check: journalctl -u $SERVICE_NAME -f"
 }
 
 # --- Execute All Steps ---
