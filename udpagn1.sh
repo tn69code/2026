@@ -3,15 +3,10 @@
 # Configuration
 CONFIG_DIR="/etc/agnudp"
 WEB_DIR="/var/www/agnudp"
-CONFIG_FILE="$CONFIG_DIR/config.json"
 USERS_FILE="$CONFIG_DIR/users.json"
 SERVICE_NAME="agnudp-web"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 WEB_PORT=8080
-
-# ----------------------------------------------------
-# 1. Utility Functions
-# ----------------------------------------------------
 
 log() {
     echo -e "\n[INFO] $1"
@@ -23,63 +18,12 @@ error() {
 }
 
 # ----------------------------------------------------
-# 2. Preparation & Dependencies
-# ----------------------------------------------------
-
-prepare_system() {
-    log "Starting AGN-UDP Web Manager final installation..."
-
-    log "Installing/Upgrading Python dependencies (flask, flask-cors)..."
-    # Ensure update is quiet to focus on main installation
-    apt update -qq
-    apt install -y python3 python3-pip || error "Failed to install python3 and pip."
-    pip3 install --upgrade flask flask-cors || error "Failed to install Python dependencies."
-
-    # Create directories
-    log "Creating configuration and web directories..."
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$WEB_DIR/templates"
-
-    # Create Configuration Files if they don't exist
-    log "Creating default configuration and user files..."
-    
-    if [ ! -f "$CONFIG_FILE" ]; then
-        cat > "$CONFIG_FILE" << EOF
-{
-    "admin_username": "admin",
-    "admin_password": "admin123"
-}
-EOF
-    fi
-
-    if [ ! -f "$USERS_FILE" ]; then
-        cat > "$USERS_FILE" << EOF
-[
-    {
-        "id": 1,
-        "username": "user1",
-        "password": "password123",
-        "data_limit": 10240,
-        "used_data": 0,
-        "active": true
-    }
-]
-EOF
-    fi
-
-    # Set Permissions
-    chown -R root:root "$CONFIG_DIR"
-    chmod 700 "$CONFIG_DIR"
-    chmod 600 "$CONFIG_FILE" "$USERS_FILE"
-}
-
-# ----------------------------------------------------
-# 3. Create Python Flask Application (app.py) - Syntax Fix
+# 1. Create Python Flask Application (app.py) - Syntax Fix
 # ----------------------------------------------------
 
 create_app_py() {
-    log "Creating Flask application script ($WEB_DIR/app.py) with custom Jinja2 delimiters and fixed Python Syntax..."
-    # The 'CustomFlask' class ensures Jinja2 treats Vue.js's {{ }} as literal text.
+    log "Creating Flask application script ($WEB_DIR/app.py) with final fixes..."
+    # Writing the Python file with correct indentation and Jinja2 fix
     cat > "$WEB_DIR/app.py" << 'EOF'
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
@@ -95,7 +39,6 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # --- Flask App Initialization (JINJA2 FIX) ---
 # Customizing Jinja2 to change default delimiters from {{ }} to [[ ]] 
-# This prevents the initial TemplateSyntaxError.
 class CustomFlask(Flask):
     jinja_options = Flask.jinja_options.copy()
     jinja_options.update(dict(
@@ -158,7 +101,6 @@ def dashboard():
     active_users = sum(1 for u in users if u['active'])
     
     try:
-        # Check the main AGN-UDP service status (If your main VPN service is not 'agnudp', change this)
         status_output = subprocess.check_output(['systemctl', 'is-active', 'agnudp'], universal_newlines=True).strip()
         service_status = 'active' if status_output == 'active' else 'inactive'
     except Exception:
@@ -247,19 +189,18 @@ def restart_service():
 
 # --- Run App ---
 if __name__ == '__main__':
-    # Define the port here
     WEB_PORT = 8080 
     app.run(host='0.0.0.0', port=WEB_PORT, debug=False)
 EOF
 }
 
 # ----------------------------------------------------
-# 4. Create HTML Template (index.html) - Delimiter Fix
+# 2. Create HTML Template (index.html) - Delimiter Fix
 # ----------------------------------------------------
 
 create_index_html() {
-    log "Creating HTML template ($WEB_DIR/templates/index.html) using new Jinja2 delimiters [[ ]]..."
-    # All Jinja2 expressions are now [[ ]]. Vue.js expressions remain {{ }} for ternary operator.
+    log "Creating HTML template (index.html) with Jinja2 delimiter fix..."
+    # The new code for index.html from the previous step which uses [[ ]] for Jinja2
     cat > "$WEB_DIR/templates/index.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -590,51 +531,26 @@ EOF
 }
 
 # ----------------------------------------------------
-# 5. Create Systemd Service File & Start Service
+# 3. Service Restart
 # ----------------------------------------------------
 
 start_service() {
-    log "Creating systemd service file ($SERVICE_FILE)..."
-    # Ensure the service file is correct
-    cat > "$SERVICE_FILE" << EOF
-[Unit]
-Description=AGN-UDP Web Interface
-After=network.target
-
-[Service]
-User=root
-Group=root
-WorkingDirectory=$WEB_DIR
-ExecStart=/usr/bin/python3 $WEB_DIR/app.py
-Restart=always
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    log "Enabling and starting $SERVICE_NAME service..."
-    # Reload and restart service to pick up new app.py
-    systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME"
+    log "Restarting $SERVICE_NAME service..."
+    
+    # Reload daemon to ensure systemd picks up any changes (though service file is assumed to be okay)
+    sudo systemctl daemon-reload
 
     # Stop any failed attempts and start fresh
-    systemctl stop "$SERVICE_NAME"
-    systemctl start "$SERVICE_NAME" || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
+    sudo systemctl stop "$SERVICE_NAME"
+    sudo systemctl start "$SERVICE_NAME" || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
 
-    log "Installation completed successfully! 🎉"
+    log "Service should now be running. Please check: http://185.84.160.65:8080"
     log "----------------------------------------------------"
-    log "Web Panel URL: http://[Your-Server-IP]:$WEB_PORT"
-    log "Default Username: admin"
-    log "Default Password: admin123"
-    log "----------------------------------------------------"
-    log "Service Status Check: systemctl status $SERVICE_NAME"
-    log "Error Log Check: journalctl -u $SERVICE_NAME -f"
+    log "Check service status: sudo systemctl status $SERVICE_NAME"
 }
 
 # --- Execute All Steps ---
-prepare_system
+# Rerun file creation to fix any encoding/indentation errors
 create_app_py
 create_index_html
 start_service
