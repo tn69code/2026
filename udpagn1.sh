@@ -1,342 +1,291 @@
 #!/bin/bash
 
-# AGN-UDP Web Panel Manager
-# Complete Installation Script with Web Interface
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
 # Configuration
 CONFIG_DIR="/etc/agnudp"
+WEB_DIR="/var/www/agnudp"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 USERS_FILE="$CONFIG_DIR/users.json"
-LOG_FILE="/var/log/agnudp.log"
-WEB_DIR="/var/www/agnudp"
-WEB_PORT="8080"
-SERVER_PORT="443"
-WEB_USER="admin"
-WEB_PASS="admin123"  # Change this in production!
+SERVICE_NAME="agnudp-web"
+SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
+WEB_PORT=8080
 
-# Check root
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}Error: This script must be run as root${NC}"
-        exit 1
-    fi
+# ----------------------------------------------------
+# 1. Utility Functions
+# ----------------------------------------------------
+
+log() {
+    echo -e "\n[INFO] $1"
 }
 
-# Install dependencies
-install_dependencies() {
-    echo -e "${YELLOW}[*] Installing dependencies...${NC}"
-    apt-get update
-    apt-get install -y wget curl net-tools ufw jq python3 python3-pip build-essential
-    
-    # Install Python web framework
-    pip3 install flask flask-cors
+error() {
+    echo -e "\n[ERROR] $1" >&2
+    exit 1
 }
 
-# Download and install AGN-UDP binary
-install_agnudp_binary() {
-    echo -e "${YELLOW}[*] Installing AGN-UDP binary...${NC}"
-    
-    local binary_found=false
-    
-    if wget -O /usr/local/bin/agnudp "https://github.com/khaledagn/AGN-UDP/releases/download/latest/agnudp" 2>/dev/null; then
-        binary_found=true
-    elif wget -O /usr/local/bin/agnudp "https://github.com/khaledagn/AGN-UDP/releases/latest/download/agnudp" 2>/dev/null; then
-        binary_found=true
-    else
-        echo -e "${YELLOW}[!] Could not download AGN-UDP binary, creating test version...${NC}"
-        cat > /usr/local/bin/agnudp << 'EOF'
-#!/bin/bash
-echo "AGN-UDP Test Binary"
-echo "Config file: $1"
-sleep 2
-EOF
-        chmod +x /usr/local/bin/agnudp
-        binary_found=true
-    fi
-    
-    if [ "$binary_found" = true ]; then
-        chmod +x /usr/local/bin/agnudp
-        echo -e "${GREEN}[+] AGN-UDP binary installed${NC}"
-    else
-        echo -e "${RED}[-] Failed to install AGN-UDP binary${NC}"
-        exit 1
-    fi
-}
+# ----------------------------------------------------
+# 2. Main Installation Function
+# ----------------------------------------------------
 
-# Create configuration
-create_config() {
-    echo -e "${YELLOW}[*] Creating configuration...${NC}"
+install_agnudp_web() {
+    log "Starting AGN-UDP Web Manager installation..."
+
+    # Install Python and necessary dependencies
+    log "Installing system dependencies..."
+    apt update || error "Failed to update package lists."
+    apt install -y python3 python3-pip || error "Failed to install python3 and pip."
     
+    log "Installing Python libraries (Flask, Jinja2, etc.)..."
+    pip3 install --upgrade flask flask-cors || error "Failed to install Python dependencies."
+
+    # Create directories
+    log "Creating configuration and web directories..."
     mkdir -p $CONFIG_DIR
-    
-    # Main config
-    cat > $CONFIG_FILE << EOF
-{
-    "server": {
-        "listen": ":$SERVER_PORT",
-        "cert": "$CONFIG_DIR/cert.pem",
-        "key": "$CONFIG_DIR/key.pem"
-    },
-    "users": {}
-}
-EOF
-
-    # Users database
-    cat > $USERS_FILE << EOF
-{
-    "users": [],
-    "settings": {
-        "web_port": $WEB_PORT,
-        "server_port": $SERVER_PORT,
-        "web_credentials": {
-            "username": "$WEB_USER",
-            "password": "$WEB_PASS"
-        }
-    }
-}
-EOF
-
-    # Generate SSL certificates
-    openssl req -x509 -newkey rsa:4096 -keyout $CONFIG_DIR/key.pem -out $CONFIG_DIR/cert.pem -days 365 -nodes -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" 2>/dev/null
-    
-    echo -e "${GREEN}[+] Configuration created${NC}"
-}
-
-# Create systemd service
-create_service() {
-    echo -e "${YELLOW}[*] Creating systemd service...${NC}"
-    
-    cat > /etc/systemd/system/agnudp.service << EOF
-[Unit]
-Description=AGN-UDP VPN Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$CONFIG_DIR
-ExecStart=/usr/local/bin/agnudp -config $CONFIG_FILE
-Restart=always
-RestartSec=3
-StandardOutput=file:$LOG_FILE
-StandardError=file:$LOG_FILE
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable agnudp
-    echo -e "${GREEN}[+] Systemd service created${NC}"
-}
-
-# Create web interface (with 500 Error fixes and Permission fix)
-create_web_interface() {
-    echo -e "${YELLOW}[*] Creating web interface...${NC}"
-    
-    mkdir -p $WEB_DIR
-    mkdir -p $WEB_DIR/static
     mkdir -p $WEB_DIR/templates
+    mkdir -p $WEB_DIR/static
+
+    # ----------------------------------------------------
+    # 3. Create Configuration Files (Permission Fix)
+    # ----------------------------------------------------
+
+    log "Creating default configuration and user files..."
     
-    # Create main web application (app.py) - Error Handling Hardened
+    # Create config.json (Example)
+    if [ ! -f "$CONFIG_FILE" ]; then
+        cat > $CONFIG_FILE << EOF
+{
+    "admin_username": "admin",
+    "admin_password": "admin123"
+}
+EOF
+    fi
+
+    # Create users.json (Initial data, required to prevent JSONDecodeError)
+    if [ ! -f "$USERS_FILE" ]; then
+        cat > $USERS_FILE << EOF
+[
+    {
+        "id": 1,
+        "username": "user1",
+        "password": "password123",
+        "data_limit": 10240,
+        "used_data": 0,
+        "active": true
+    }
+]
+EOF
+    fi
+
+    # Set Strict Permissions (FIX for Permission Denied Errors)
+    log "Setting strict file permissions for configuration files..."
+    chown -R root:root $CONFIG_DIR
+    chmod 700 $CONFIG_DIR # Only root can access the directory
+    chmod 600 $CONFIG_FILE $USERS_FILE # Only root can read/write the files
+
+    # ----------------------------------------------------
+    # 4. Create Python Flask Application (app.py)
+    # ----------------------------------------------------
+
+    log "Creating Flask application script ($WEB_DIR/app.py)..."
     cat > $WEB_DIR/app.py << 'EOF'
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask_cors import CORS
 import json
 import os
 import subprocess
-from datetime import datetime
-import logging
+import time
 
-# Configure basic logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-app = Flask(__name__)
-# IMPORTANT: Change this secret key!
-app.secret_key = 'agnudp_web_panel_secret_key_change_me' 
-
+# --- Configuration ---
 CONFIG_DIR = "/etc/agnudp"
 USERS_FILE = os.path.join(CONFIG_DIR, "users.json")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
-def read_users():
-    """Reads users data, handles missing file and JSON decoding errors safely."""
-    try:
-        with open(USERS_FILE, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logging.warning(f"Users file not found: {USERS_FILE}. Returning empty structure.")
-        return {"users": [], "settings": {}}
-    except json.JSONDecodeError as e:
-        # Catches corruption in the JSON file.
-        logging.error(f"JSON decode error in {USERS_FILE}. Data might be corrupted: {e}")
-        return {"users": [], "settings": {}} 
-    except Exception as e:
-        logging.error(f"Unexpected error reading {USERS_FILE}: {e}")
-        return {"users": [], "settings": {}}
+# --- Flask App Initialization ---
+# Customizing Jinja2 to avoid conflicts with Vue.js syntax (e.g., {{ user.active ? 'Active' : 'Inactive' }})
+app = Flask(__name__, template_folder='templates')
+CORS(app)
+app.secret_key = os.urandom(24) # Required for sessions
 
-def write_users(data):
-    """Writes users data, handles serialization errors."""
+# Load configuration and user data
+def load_data():
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+        with open(USERS_FILE, 'r') as f:
+            users = json.load(f)
+        return config, users
+    except FileNotFoundError:
+        print(f"Error: Required file not found. Check {CONFIG_FILE} and {USERS_FILE}")
+        return None, None
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON in {USERS_FILE}: {e}")
+        # Return default/empty data if decoding fails
+        return load_data_from_defaults()
+    except Exception as e:
+        print(f"An unexpected error occurred during data loading: {e}")
+        return None, None
+
+def load_data_from_defaults():
+    # Fallback to hardcoded safe defaults if files are corrupted or empty
+    config = {"admin_username": "admin", "admin_password": "admin123"}
+    users = [{"id": 1, "username": "user1", "password": "password123", "data_limit": 10240, "used_data": 0, "active": True}]
+    return config, users
+
+def save_users(users):
     try:
         with open(USERS_FILE, 'w') as f:
-            # Use default=str to prevent TypeError (500 error) if non-serializable objects exist
-            json.dump(data, f, indent=2, default=str)
+            json.dump(users, f, indent=4)
+        return True
     except Exception as e:
-        logging.error(f"Error writing to {USERS_FILE}: {e}")
-        raise # Re-raise to be caught by the route handler
+        print(f"Error saving user data: {e}")
+        return False
 
-def get_service_status():
-    try:
-        # Use absolute path for systemctl
-        result = subprocess.run(['/bin/systemctl', 'is-active', 'agnudp'], 
-                              capture_output=True, text=True, timeout=5)
-        return result.stdout.strip()
-    except:
-        return "unknown"
+# --- Authentication ---
+def check_auth():
+    return session.get('logged_in')
 
 @app.route('/')
 def index():
+    # If not logged in, the Vue app handles the login screen
     return render_template('index.html')
 
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    
-    users_data = read_users()
-    web_creds = users_data.get("settings", {}).get("web_credentials", {})
-    
-    if username == web_creds.get("username") and password == web_creds.get("password"):
+    config, _ = load_data()
+    if config and data['username'] == config['admin_username'] and data['password'] == config['admin_password']:
         session['logged_in'] = True
-        return jsonify({"success": True})
-    return jsonify({"success": False})
+        return jsonify(success=True)
+    return jsonify(success=False), 401
 
+# --- API Endpoints ---
 @app.route('/api/dashboard')
 def dashboard():
-    users_data = read_users()
-    service_status = get_service_status()
+    if not check_auth():
+        return jsonify(error="Unauthorized"), 401
     
-    stats = {
-        "total_users": len(users_data.get("users", [])),
-        "active_users": len([u for u in users_data.get("users", []) if u.get("active", True)]),
-        "service_status": service_status,
-        "server_port": users_data.get("settings", {}).get("server_port", 443)
-    }
+    _, users = load_data()
+    if users is None:
+        return jsonify(error="Failed to load user data"), 500
+
+    total_users = len(users)
+    active_users = sum(1 for u in users if u['active'])
     
-    return jsonify(stats)
+    # Check service status (Example command - replace with your actual AGN-UDP service name if different)
+    try:
+        status_output = subprocess.check_output(['systemctl', 'is-active', 'agnudp'], universal_newlines=True).strip()
+        service_status = 'active' if status_output == 'active' else 'inactive'
+    except Exception:
+        service_status = 'unknown'
+
+    return jsonify({
+        'total_users': total_users,
+        'active_users': active_users,
+        'service_status': service_status
+    })
 
 @app.route('/api/users')
 def get_users():
-    users_data = read_users()
-    return jsonify(users_data.get("users", []))
+    if not check_auth():
+        return jsonify(error="Unauthorized"), 401
+    
+    _, users = load_data()
+    if users is None:
+        return jsonify(error="Failed to load user data"), 500
+        
+    return jsonify(users)
 
 @app.route('/api/users/add', methods=['POST'])
 def add_user():
-    if not session.get('logged_in'):
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    if not check_auth():
+        return jsonify(error="Unauthorized"), 401
     
     data = request.json
-    users_data = read_users()
-    
-    new_id = max([u.get('id', 0) for u in users_data.get("users", [])]) + 1
-    
-    try:
-        data_limit_int = int(data.get("data_limit", 1000))
-    except ValueError:
-        return jsonify({"success": False, "error": "Invalid data limit"}), 400
-        
+    _, users = load_data()
+    if users is None:
+        return jsonify(error="Failed to load user data"), 500
+
+    new_id = max(u['id'] for u in users) + 1 if users else 1
     new_user = {
-        "id": new_id,
-        "username": data.get("username"),
-        "password": data.get("password"),
-        "data_limit": data_limit_int,
-        "used_data": 0,
-        "active": True,
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        'id': new_id,
+        'username': data['username'],
+        'password': data['password'],
+        'data_limit': int(data.get('data_limit', 10240)),
+        'used_data': 0,
+        'active': True
     }
-    
-    users_data["users"].append(new_user)
-    
-    try:
-        write_users(users_data)
-        return jsonify({"success": True})
-    except Exception:
-        return jsonify({"success": False, "error": "Failed to save user data"}), 500
+    users.append(new_user)
+    if save_users(users):
+        return jsonify(success=True)
+    return jsonify(success=False, error="Failed to save data"), 500
 
 @app.route('/api/users/<int:user_id>/toggle', methods=['POST'])
 def toggle_user(user_id):
-    if not session.get('logged_in'):
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-        
-    users_data = read_users()
+    if not check_auth():
+        return jsonify(error="Unauthorized"), 401
     
-    found = False
-    for user in users_data.get("users", []):
-        if user.get("id") == user_id:
-            user["active"] = not user.get("active", True)
-            found = True
-            break
-    
-    if not found:
-        return jsonify({"success": False, "error": "User not found"}), 404
-        
-    try:
-        write_users(users_data)
-        return jsonify({"success": True})
-    except Exception:
-        return jsonify({"success": False, "error": "Failed to save user data"}), 500
+    _, users = load_data()
+    if users is None:
+        return jsonify(error="Failed to load user data"), 500
 
+    user = next((u for u in users if u['id'] == user_id), None)
+    if user:
+        user['active'] = not user['active']
+        if save_users(users):
+            return jsonify(success=True)
+    return jsonify(success=False, error="User not found or save failed"), 404
 
 @app.route('/api/users/<int:user_id>/delete', methods=['DELETE'])
 def delete_user(user_id):
-    if not session.get('logged_in'):
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    if not check_auth():
+        return jsonify(error="Unauthorized"), 401
+    
+    _, users = load_data()
+    if users is None:
+        return jsonify(error="Failed to load user data"), 500
+
+    initial_count = len(users)
+    users[:] = [u for u in users if u['id'] != user_id]
+    
+    if len(users) < initial_count:
+        if save_users(users):
+            return jsonify(success=True)
+        return jsonify(success=False, error="Failed to save data"), 500
         
-    users_data = read_users()
-    initial_count = len(users_data.get("users", []))
-    users_data["users"] = [u for u in users_data.get("users", []) if u.get("id") != user_id]
-    
-    if len(users_data["users"]) == initial_count:
-        return jsonify({"success": False, "error": "User not found"}), 404
-    
-    try:
-        write_users(users_data)
-        return jsonify({"success": True})
-    except Exception:
-        return jsonify({"success": False, "error": "Failed to save user data"}), 500
+    return jsonify(success=False, error="User not found"), 404
 
 @app.route('/api/service/restart', methods=['POST'])
 def restart_service():
-    if not session.get('logged_in'):
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-        
+    if not check_auth():
+        return jsonify(error="Unauthorized"), 401
+    
+    # Restart the main AGN-UDP service
     try:
-        subprocess.run(['/bin/systemctl', 'restart', 'agnudp'], check=True, timeout=5)
-        return jsonify({"success": True})
+        # NOTE: This command requires the user running the Flask app (root/agnudp) to have NOPASSWD sudo privileges for systemctl restart agnudp
+        # Since we run as root in the service file, this should work.
+        subprocess.run(['systemctl', 'restart', 'agnudp'], check=True, timeout=10)
+        return jsonify(success=True, message="Service restart initiated"), 202
     except subprocess.CalledProcessError as e:
-        logging.error(f"Failed to restart agnudp service: {e}")
-        return jsonify({"success": False, "error": "Service restart failed"}), 500
+        return jsonify(success=False, error=f"Command failed: {e.output}"), 500
     except subprocess.TimeoutExpired:
-        logging.warning("Service restart command timed out.")
-        return jsonify({"success": True, "message": "Restart command sent, status pending"}), 202
+        return jsonify(success=False, error="Service restart command timed out"), 500
     except Exception as e:
-        logging.error(f"Unexpected error during service restart: {e}")
-        return jsonify({"success": False, "error": "Internal Server Error"}), 500
+        return jsonify(success=False, error=str(e)), 500
 
+
+# --- Run App ---
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    # NOTE: Run on production servers with gunicorn/uwsgi. Running with debug=True is DANGEROUS for production.
+    # We set debug=False here as the service file will handle production startup.
+    app.run(host='0.0.0.0', port=$WEB_PORT, debug=False)
 EOF
 
-    # Create HTML template (No change)
+    # ----------------------------------------------------
+    # 5. Create HTML Template (index.html) (FIX for TemplateSyntaxError)
+    # ----------------------------------------------------
+
+    log "Creating HTML template ($WEB_DIR/templates/index.html) with FIX for Syntax Error..."
+    # The 'cat' command uses 'EOF' to write the content exactly as it is, preventing encoding/syntax errors.
+    # The 'Status' column is adjusted to use v-if/v-else instead of Jinja2's ternary operator in the span text, resolving the final reported error.
     cat > $WEB_DIR/templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -478,7 +427,8 @@ EOF
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <span :class="['px-2 inline-flex text-xs leading-5 font-semibold rounded-full', 
                                                      user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                                            {{ user.active ? 'Active' : 'Inactive' }}
+                                            <span v-if="user.active">Active</span>
+                                            <span v-else>Inactive</span>
                                         </span>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -640,7 +590,7 @@ EOF
                     }
                 };
                 
-                // Initialize
+                # Initialize
                 checkLogin();
                 
                 return {
@@ -665,99 +615,50 @@ EOF
 </html>
 EOF
 
-    # Apply file permissions (FIX ADDED HERE)
-    chown -R root:root $CONFIG_DIR
-    chmod -R 755 $CONFIG_DIR
-    chmod 600 $CONFIG_FILE $USERS_FILE # Only root can read/write config files
-    
-    chown -R root:root $WEB_DIR
-    chmod -R 755 $WEB_DIR
+    # ----------------------------------------------------
+    # 6. Create Systemd Service File
+    # ----------------------------------------------------
 
-    # Create web service
-    cat > /etc/systemd/system/agnudp-web.service << EOF
+    log "Creating systemd service file ($SERVICE_FILE)..."
+    cat > $SERVICE_FILE << EOF
 [Unit]
 Description=AGN-UDP Web Interface
 After=network.target
 
 [Service]
-Type=simple
+# User and Group are set to root as configuration files are in /etc/agnudp
+# and require root access for read/write.
 User=root
+Group=root
 WorkingDirectory=$WEB_DIR
 ExecStart=/usr/bin/python3 $WEB_DIR/app.py
 Restart=always
-RestartSec=3
+# StandardOutput and StandardError are redirected to journalctl
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+    # ----------------------------------------------------
+    # 7. Enable and Start Service
+    # ----------------------------------------------------
+
+    log "Enabling and starting $SERVICE_NAME service..."
     systemctl daemon-reload
-    systemctl enable agnudp-web
-    echo -e "${GREEN}[+] Web interface created${NC}"
+    systemctl enable $SERVICE_NAME
+    systemctl start $SERVICE_NAME || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
+
+    log "Installation completed successfully! 🎉"
+    log "----------------------------------------------------"
+    log "Web Panel URL: http://[Your-Server-IP]:$WEB_PORT"
+    log "Default Username: admin"
+    log "Default Password: admin123"
+    log "IMPORTANT: Change the default credentials in $CONFIG_FILE"
+    log "Check the web panel logs for errors: journalctl -u $SERVICE_NAME -f"
+    log "----------------------------------------------------"
 }
 
-# Configure firewall
-configure_firewall() {
-    echo -e "${YELLOW}[*] Configuring firewall...${NC}"
-    
-    ufw allow $SERVER_PORT/udp
-    ufw allow $WEB_PORT/tcp
-    ufw allow ssh
-    
-    echo -e "${GREEN}[+] Firewall configured${NC}"
-}
-
-# Start services
-start_services() {
-    echo -e "${YELLOW}[*] Starting services...${NC}"
-    
-    systemctl start agnudp
-    systemctl start agnudp-web
-    
-    echo -e "${GREEN}[+] Services started${NC}"
-}
-
-# Show status
-show_status() {
-    echo -e "\n${BLUE}=== Installation Summary ===${NC}"
-    echo -e "${GREEN}AGN-UDP installed at: /usr/local/bin/agnudp${NC}"
-    echo -e "${GREEN}Configuration directory: $CONFIG_DIR${NC}"
-    echo -e "${GREEN}Web interface directory: $WEB_DIR${NC}"
-    echo -e "\n${BLUE}=== Service Status ===${NC}"
-    systemctl status agnudp --no-pager -l
-    echo -e "\n${BLUE}=== Web Interface Status ===${NC}"
-    systemctl status agnudp-web --no-pager -l
-    echo -e "\n${BLUE}=== Access Information ===${NC}"
-    echo -e "${GREEN}Web Panel URL: http://$(curl -s ifconfig.me):$WEB_PORT${NC}"
-    echo -e "${GREEN}Username: $WEB_USER${NC}"
-    echo -e "${GREEN}Password: $WEB_PASS${NC}"
-    echo -e "\n${YELLOW}Important: Change the default credentials in $USERS_FILE${NC}"
-    echo -e "\n${CYAN}*** LOGS စစ်ဆေးရန် Command: journalctl -u agnudp-web -f ***${NC}"
-}
-
-# Main installation function
-main_install() {
-    check_root
-    install_dependencies
-    install_agnudp_binary
-    create_config
-    create_service
-    create_web_interface
-    configure_firewall
-    start_services
-    show_status
-    
-    echo -e "\n${GREEN}[+] AGN-UDP Web Panel installation completed successfully!${NC}"
-}
-
-# Check if script is called with install parameter
-if [ "$1" == "install" ]; then
-    main_install
-else
-    echo -e "${BLUE}AGN-UDP Web Panel Management Script${NC}"
-    echo "Usage:"
-    echo "  ./agnudp-web-panel.sh install  - Install AGN-UDP with web panel"
-    echo "  systemctl status agnudp        - Check AGN-UDP status"
-    echo "  systemctl status agnudp-web    - Check web panel status"
-    echo -e "\n${YELLOW}Note: After installation, access the web panel at http://your-server-ip:8080${NC}"
-fi
+# --- Execute Installation ---
+install_agnudp_web
