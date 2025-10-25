@@ -821,7 +821,7 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: conntrack check, prepare_user_data, edit_expires route)
+# 💡 Web Panel (Flask - web.py) (MODIFIED: conntrack check, prepare_user_data, edit_expires route, LOGIN PASSWORD TYPE)
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -1177,7 +1177,8 @@ text {
                 <label for="password" style="display:none;">Password</label>
                 <div class="input-field-wrapper">
                     <i class="icon">🔒</i>
-                    <input type="password" id="password" name="p" placeholder="Password" required>
+                    {# 💡 FIX: Change type="password" to type="text" to display password #}
+                    <input type="text" id="password" name="p" placeholder="Password" required> 
                 </div>
             </div>
             <button type="submit" class="login-button">Login</button>
