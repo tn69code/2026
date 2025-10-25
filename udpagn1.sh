@@ -23,13 +23,12 @@ error() {
 }
 
 # ----------------------------------------------------
-# 2. Main Installation Function
+# 2. Preparation & Dependencies
 # ----------------------------------------------------
 
-install_agnudp_web() {
-    log "Starting AGN-UDP Web Manager installation with FINAL FIX..."
+prepare_system() {
+    log "Starting AGN-UDP Web Manager final installation..."
 
-    # Install Python and necessary dependencies
     log "Installing/Upgrading Python dependencies (flask, flask-cors)..."
     apt update -qq
     apt install -y python3 python3-pip || error "Failed to install python3 and pip."
@@ -37,14 +36,14 @@ install_agnudp_web() {
 
     # Create directories
     log "Creating configuration and web directories..."
-    mkdir -p $CONFIG_DIR
-    mkdir -p $WEB_DIR/templates
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$WEB_DIR/templates"
 
-    # Create Configuration Files
+    # Create Configuration Files if they don't exist
     log "Creating default configuration and user files..."
     
     if [ ! -f "$CONFIG_FILE" ]; then
-        cat > $CONFIG_FILE << EOF
+        cat > "$CONFIG_FILE" << EOF
 {
     "admin_username": "admin",
     "admin_password": "admin123"
@@ -53,7 +52,7 @@ EOF
     fi
 
     if [ ! -f "$USERS_FILE" ]; then
-        cat > $USERS_FILE << EOF
+        cat > "$USERS_FILE" << EOF
 [
     {
         "id": 1,
@@ -68,16 +67,19 @@ EOF
     fi
 
     # Set Permissions
-    chown -R root:root $CONFIG_DIR
-    chmod 700 $CONFIG_DIR
-    chmod 600 $CONFIG_FILE $USERS_FILE
+    chown -R root:root "$CONFIG_DIR"
+    chmod 700 "$CONFIG_DIR"
+    chmod 600 "$CONFIG_FILE" "$USERS_FILE"
+}
 
-    # ----------------------------------------------------
-    # 3. Create Python Flask Application (app.py) (WITH JINJA2 FIX)
-    # ----------------------------------------------------
+# ----------------------------------------------------
+# 3. Create Python Flask Application (app.py) (WITH JINJA2 FIX)
+# ----------------------------------------------------
 
+create_app_py() {
     log "Creating Flask application script ($WEB_DIR/app.py) with custom Jinja2 delimiters..."
-    cat > $WEB_DIR/app.py << 'EOF'
+    # Writing the Python file with correct Class definition to fix Jinja2/Vue conflict
+    cat > "$WEB_DIR/app.py" << 'EOF'
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
 import json
@@ -156,7 +158,7 @@ def dashboard():
     active_users = sum(1 for u in users if u['active'])
     
     try:
-        # Check the main AGN-UDP service status
+        # Check the main AGN-UDP service status (Assuming the service name is 'agnudp')
         status_output = subprocess.check_output(['systemctl', 'is-active', 'agnudp'], universal_newlines=True).strip()
         service_status = 'active' if status_output == 'active' else 'inactive'
     except Exception:
@@ -247,14 +249,16 @@ def restart_service():
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=$WEB_PORT, debug=False)
 EOF
+}
 
-    # ----------------------------------------------------
-    # 4. Create HTML Template (index.html) (JINJA2 DELIMITER FIX)
-    # ----------------------------------------------------
+# ----------------------------------------------------
+# 4. Create HTML Template (index.html) (JINJA2 DELIMITER FIX)
+# ----------------------------------------------------
 
+create_index_html() {
     log "Creating HTML template ($WEB_DIR/templates/index.html) using new Jinja2 delimiters [[ ]]..."
     # All Jinja2 expressions are now [[ ]]. Vue.js expressions remain {{ }}
-    cat > $WEB_DIR/templates/index.html << 'EOF'
+    cat > "$WEB_DIR/templates/index.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -581,13 +585,15 @@ EOF
 </body>
 </html>
 EOF
+}
 
-    # ----------------------------------------------------
-    # 5. Create Systemd Service File
-    # ----------------------------------------------------
+# ----------------------------------------------------
+# 5. Create Systemd Service File & Start Service
+# ----------------------------------------------------
 
+start_service() {
     log "Creating systemd service file ($SERVICE_FILE)..."
-    cat > $SERVICE_FILE << EOF
+    cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=AGN-UDP Web Interface
 After=network.target
@@ -605,14 +611,10 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-    # ----------------------------------------------------
-    # 6. Enable and Start Service
-    # ----------------------------------------------------
-
     log "Enabling and starting $SERVICE_NAME service..."
     systemctl daemon-reload
-    systemctl enable $SERVICE_NAME
-    systemctl restart $SERVICE_NAME || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
+    systemctl enable "$SERVICE_NAME"
+    systemctl restart "$SERVICE_NAME" || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
 
     log "Installation completed successfully! 🎉"
     log "----------------------------------------------------"
@@ -622,5 +624,8 @@ EOF
     log "----------------------------------------------------"
 }
 
-# --- Execute Installation ---
-install_agnudp_web
+# --- Execute All Steps ---
+prepare_system
+create_app_py
+create_index_html
+start_service
