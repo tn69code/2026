@@ -27,29 +27,22 @@ error() {
 # ----------------------------------------------------
 
 install_agnudp_web() {
-    log "Starting AGN-UDP Web Manager installation..."
+    log "Starting AGN-UDP Web Manager installation with FINAL FIX..."
 
     # Install Python and necessary dependencies
-    log "Installing system dependencies..."
-    apt update || error "Failed to update package lists."
+    log "Installing/Upgrading Python dependencies (flask, flask-cors)..."
+    apt update -qq
     apt install -y python3 python3-pip || error "Failed to install python3 and pip."
-    
-    log "Installing Python libraries (Flask, Jinja2, etc.)..."
     pip3 install --upgrade flask flask-cors || error "Failed to install Python dependencies."
 
     # Create directories
     log "Creating configuration and web directories..."
     mkdir -p $CONFIG_DIR
     mkdir -p $WEB_DIR/templates
-    mkdir -p $WEB_DIR/static
 
-    # ----------------------------------------------------
-    # 3. Create Configuration Files (Permission Fix)
-    # ----------------------------------------------------
-
+    # Create Configuration Files
     log "Creating default configuration and user files..."
     
-    # Create config.json (Example)
     if [ ! -f "$CONFIG_FILE" ]; then
         cat > $CONFIG_FILE << EOF
 {
@@ -59,7 +52,6 @@ install_agnudp_web() {
 EOF
     fi
 
-    # Create users.json (Initial data, required to prevent JSONDecodeError)
     if [ ! -f "$USERS_FILE" ]; then
         cat > $USERS_FILE << EOF
 [
@@ -75,17 +67,16 @@ EOF
 EOF
     fi
 
-    # Set Strict Permissions (FIX for Permission Denied Errors)
-    log "Setting strict file permissions for configuration files..."
+    # Set Permissions
     chown -R root:root $CONFIG_DIR
-    chmod 700 $CONFIG_DIR # Only root can access the directory
-    chmod 600 $CONFIG_FILE $USERS_FILE # Only root can read/write the files
+    chmod 700 $CONFIG_DIR
+    chmod 600 $CONFIG_FILE $USERS_FILE
 
     # ----------------------------------------------------
-    # 4. Create Python Flask Application (app.py)
+    # 3. Create Python Flask Application (app.py) (WITH JINJA2 FIX)
     # ----------------------------------------------------
 
-    log "Creating Flask application script ($WEB_DIR/app.py)..."
+    log "Creating Flask application script ($WEB_DIR/app.py) with custom Jinja2 delimiters..."
     cat > $WEB_DIR/app.py << 'EOF'
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_cors import CORS
@@ -99,9 +90,17 @@ CONFIG_DIR = "/etc/agnudp"
 USERS_FILE = os.path.join(CONFIG_DIR, "users.json")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
-# --- Flask App Initialization ---
-# Customizing Jinja2 to avoid conflicts with Vue.js syntax (e.g., {{ user.active ? 'Active' : 'Inactive' }})
-app = Flask(__name__, template_folder='templates')
+# --- Flask App Initialization (JINJA2 FIX) ---
+# Customizing Jinja2 to change default delimiters from {{ }} to [[ ]] 
+# This prevents the conflict with Vue.js expressions (e.g., {{ user.active ? 'Active' : 'Inactive' }})
+class CustomFlask(Flask):
+    jinja_options = Flask.jinja_options.copy()
+    jinja_options.update(dict(
+        variable_start_string='[[',  # Jinja2 variables use [[ ]]
+        variable_end_string=']]',
+    ))
+
+app = CustomFlask(__name__, template_folder='templates')
 CORS(app)
 app.secret_key = os.urandom(24) # Required for sessions
 
@@ -113,22 +112,12 @@ def load_data():
         with open(USERS_FILE, 'r') as f:
             users = json.load(f)
         return config, users
-    except FileNotFoundError:
-        print(f"Error: Required file not found. Check {CONFIG_FILE} and {USERS_FILE}")
-        return None, None
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON in {USERS_FILE}: {e}")
-        # Return default/empty data if decoding fails
-        return load_data_from_defaults()
-    except Exception as e:
-        print(f"An unexpected error occurred during data loading: {e}")
-        return None, None
-
-def load_data_from_defaults():
-    # Fallback to hardcoded safe defaults if files are corrupted or empty
-    config = {"admin_username": "admin", "admin_password": "admin123"}
-    users = [{"id": 1, "username": "user1", "password": "password123", "data_limit": 10240, "used_data": 0, "active": True}]
-    return config, users
+    except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+        print(f"Error loading data: {e}. Falling back to defaults.")
+        # Fallback to hardcoded safe defaults if files are corrupted or missing
+        config = {"admin_username": "admin", "admin_password": "admin123"}
+        users = [{"id": 1, "username": "user1", "password": "password123", "data_limit": 10240, "used_data": 0, "active": True}]
+        return config, users
 
 def save_users(users):
     try:
@@ -145,7 +134,6 @@ def check_auth():
 
 @app.route('/')
 def index():
-    # If not logged in, the Vue app handles the login screen
     return render_template('index.html')
 
 @app.route('/api/login', methods=['POST'])
@@ -164,14 +152,11 @@ def dashboard():
         return jsonify(error="Unauthorized"), 401
     
     _, users = load_data()
-    if users is None:
-        return jsonify(error="Failed to load user data"), 500
-
     total_users = len(users)
     active_users = sum(1 for u in users if u['active'])
     
-    # Check service status (Example command - replace with your actual AGN-UDP service name if different)
     try:
+        # Check the main AGN-UDP service status
         status_output = subprocess.check_output(['systemctl', 'is-active', 'agnudp'], universal_newlines=True).strip()
         service_status = 'active' if status_output == 'active' else 'inactive'
     except Exception:
@@ -189,9 +174,6 @@ def get_users():
         return jsonify(error="Unauthorized"), 401
     
     _, users = load_data()
-    if users is None:
-        return jsonify(error="Failed to load user data"), 500
-        
     return jsonify(users)
 
 @app.route('/api/users/add', methods=['POST'])
@@ -201,8 +183,6 @@ def add_user():
     
     data = request.json
     _, users = load_data()
-    if users is None:
-        return jsonify(error="Failed to load user data"), 500
 
     new_id = max(u['id'] for u in users) + 1 if users else 1
     new_user = {
@@ -224,9 +204,6 @@ def toggle_user(user_id):
         return jsonify(error="Unauthorized"), 401
     
     _, users = load_data()
-    if users is None:
-        return jsonify(error="Failed to load user data"), 500
-
     user = next((u for u in users if u['id'] == user_id), None)
     if user:
         user['active'] = not user['active']
@@ -240,9 +217,6 @@ def delete_user(user_id):
         return jsonify(error="Unauthorized"), 401
     
     _, users = load_data()
-    if users is None:
-        return jsonify(error="Failed to load user data"), 500
-
     initial_count = len(users)
     users[:] = [u for u in users if u['id'] != user_id]
     
@@ -258,10 +232,7 @@ def restart_service():
     if not check_auth():
         return jsonify(error="Unauthorized"), 401
     
-    # Restart the main AGN-UDP service
     try:
-        # NOTE: This command requires the user running the Flask app (root/agnudp) to have NOPASSWD sudo privileges for systemctl restart agnudp
-        # Since we run as root in the service file, this should work.
         subprocess.run(['systemctl', 'restart', 'agnudp'], check=True, timeout=10)
         return jsonify(success=True, message="Service restart initiated"), 202
     except subprocess.CalledProcessError as e:
@@ -274,18 +245,15 @@ def restart_service():
 
 # --- Run App ---
 if __name__ == '__main__':
-    # NOTE: Run on production servers with gunicorn/uwsgi. Running with debug=True is DANGEROUS for production.
-    # We set debug=False here as the service file will handle production startup.
     app.run(host='0.0.0.0', port=$WEB_PORT, debug=False)
 EOF
 
     # ----------------------------------------------------
-    # 5. Create HTML Template (index.html) (FIX for TemplateSyntaxError)
+    # 4. Create HTML Template (index.html) (JINJA2 DELIMITER FIX)
     # ----------------------------------------------------
 
-    log "Creating HTML template ($WEB_DIR/templates/index.html) with FIX for Syntax Error..."
-    # The 'cat' command uses 'EOF' to write the content exactly as it is, preventing encoding/syntax errors.
-    # The 'Status' column is adjusted to use v-if/v-else instead of Jinja2's ternary operator in the span text, resolving the final reported error.
+    log "Creating HTML template ($WEB_DIR/templates/index.html) using new Jinja2 delimiters [[ ]]..."
+    # All Jinja2 expressions are now [[ ]]. Vue.js expressions remain {{ }}
     cat > $WEB_DIR/templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -346,7 +314,7 @@ EOF
                             </div>
                             <div class="ml-4">
                                 <h3 class="text-sm font-medium text-gray-500">Total Users</h3>
-                                <p class="text-2xl font-semibold text-gray-900">{{ stats.total_users }}</p>
+                                <p class="text-2xl font-semibold text-gray-900">[[ stats.total_users ]]</p>
                             </div>
                         </div>
                     </div>
@@ -358,7 +326,7 @@ EOF
                             </div>
                             <div class="ml-4">
                                 <h3 class="text-sm font-medium text-gray-500">Active Users</h3>
-                                <p class="text-2xl font-semibold text-gray-900">{{ stats.active_users }}</p>
+                                <p class="text-2xl font-semibold text-gray-900">[[ stats.active_users ]]</p>
                             </div>
                         </div>
                     </div>
@@ -370,7 +338,7 @@ EOF
                             </div>
                             <div class="ml-4">
                                 <h3 class="text-sm font-medium text-gray-500">Service Status</h3>
-                                <p class="text-2xl font-semibold" :class="serviceStatusTextClass">{{ stats.service_status }}</p>
+                                <p class="text-2xl font-semibold" :class="serviceStatusTextClass">[[ stats.service_status ]]</p>
                             </div>
                         </div>
                     </div>
@@ -420,15 +388,14 @@ EOF
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
                                 <tr v-for="user in users" :key="user.id">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ user.id }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ user.username }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ user.used_data }} MB</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ user.data_limit }} MB</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.id ]]</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.username ]]</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.used_data ]] MB</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.data_limit ]] MB</td>
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <span :class="['px-2 inline-flex text-xs leading-5 font-semibold rounded-full', 
                                                      user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                                            <span v-if="user.active">Active</span>
-                                            <span v-else>Inactive</span>
+                                            {{ user.active ? 'Active' : 'Inactive' }} 
                                         </span>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -436,7 +403,7 @@ EOF
                                                 :class="['mr-2 px-3 py-1 rounded-md', 
                                                        user.active ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-500 hover:bg-green-600',
                                                        'text-white transition duration-200']">
-                                            {{ user.active ? 'Deactivate' : 'Activate' }}
+                                            [[ user.active ? 'Deactivate' : 'Activate' ]]
                                         </button>
                                         <button @click="deleteUser(user.id)" 
                                                 class="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition duration-200">
@@ -590,7 +557,7 @@ EOF
                     }
                 };
                 
-                # Initialize
+                // Initialize
                 checkLogin();
                 
                 return {
@@ -616,7 +583,7 @@ EOF
 EOF
 
     # ----------------------------------------------------
-    # 6. Create Systemd Service File
+    # 5. Create Systemd Service File
     # ----------------------------------------------------
 
     log "Creating systemd service file ($SERVICE_FILE)..."
@@ -626,14 +593,11 @@ Description=AGN-UDP Web Interface
 After=network.target
 
 [Service]
-# User and Group are set to root as configuration files are in /etc/agnudp
-# and require root access for read/write.
 User=root
 Group=root
 WorkingDirectory=$WEB_DIR
 ExecStart=/usr/bin/python3 $WEB_DIR/app.py
 Restart=always
-# StandardOutput and StandardError are redirected to journalctl
 StandardOutput=journal
 StandardError=journal
 
@@ -642,21 +606,19 @@ WantedBy=multi-user.target
 EOF
 
     # ----------------------------------------------------
-    # 7. Enable and Start Service
+    # 6. Enable and Start Service
     # ----------------------------------------------------
 
     log "Enabling and starting $SERVICE_NAME service..."
     systemctl daemon-reload
     systemctl enable $SERVICE_NAME
-    systemctl start $SERVICE_NAME || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
+    systemctl restart $SERVICE_NAME || error "Failed to start $SERVICE_NAME. Check logs with 'journalctl -u $SERVICE_NAME -f'"
 
     log "Installation completed successfully! 🎉"
     log "----------------------------------------------------"
     log "Web Panel URL: http://[Your-Server-IP]:$WEB_PORT"
     log "Default Username: admin"
     log "Default Password: admin123"
-    log "IMPORTANT: Change the default credentials in $CONFIG_FILE"
-    log "Check the web panel logs for errors: journalctl -u $SERVICE_NAME -f"
     log "----------------------------------------------------"
 }
 
