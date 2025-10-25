@@ -99,7 +99,8 @@ fi
 echo -e "${G}🔒 Web Admin Login UI ထည့်မလား..?${Z}"
 read -r -p "Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
-  read -r -s -p "Web Admin Password: " WEB_PASS; echo
+  # 💡 ပြင်ဆင်ပြီး: -s (silent) ကို ဖျက်လိုက်သဖြင့် Password ရိုက်ထည့်ရင် စာပေါ်မည်။
+  read -r -p "Web Admin Password: " WEB_PASS; echo
   
   # 💡 NEW: Contact Link ကို မေးမြန်းခြင်း
   echo -e "${G}🔗 Login အောက်နားတွင် ပြသရန် ဆက်သွယ်ရန် Link (Optional)${Z}"
@@ -425,7 +426,8 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 .btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
 .btn-edit:hover { background-color: #e0ac08; }
 .delform { display: inline-block; margin: 0; }
-.btn-delete { padding: 6px 10px; font-size: 0.9em; } 
+.btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
+.btn-delete:hover { background-color: #c82333; }
 
 /* 💡 NEW BUTTON: Expires Edit Button */
 .btn-edit-expires { 
