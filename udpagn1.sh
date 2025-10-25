@@ -45,16 +45,13 @@ install_dependencies() {
 install_agnudp_binary() {
     echo -e "${YELLOW}[*] Installing AGN-UDP binary...${NC}"
     
-    # Try to download from possible sources
     local binary_found=false
     
-    # Source 1: Direct download
     if wget -O /usr/local/bin/agnudp "https://github.com/khaledagn/AGN-UDP/releases/download/latest/agnudp" 2>/dev/null; then
         binary_found=true
     elif wget -O /usr/local/bin/agnudp "https://github.com/khaledagn/AGN-UDP/releases/latest/download/agnudp" 2>/dev/null; then
         binary_found=true
     else
-        # If download fails, create a dummy binary for testing
         echo -e "${YELLOW}[!] Could not download AGN-UDP binary, creating test version...${NC}"
         cat > /usr/local/bin/agnudp << 'EOF'
 #!/bin/bash
@@ -94,7 +91,6 @@ create_config() {
 EOF
 
     # Users database
-    # This structure is correct and ensures the web panel can start
     cat > $USERS_FILE << EOF
 {
     "users": [],
@@ -143,7 +139,7 @@ EOF
     echo -e "${GREEN}[+] Systemd service created${NC}"
 }
 
-# Create web interface - 500 Error Fixes Applied in app.py
+# Create web interface (with 500 Error fixes and Permission fix)
 create_web_interface() {
     echo -e "${YELLOW}[*] Creating web interface...${NC}"
     
@@ -151,11 +147,7 @@ create_web_interface() {
     mkdir -p $WEB_DIR/static
     mkdir -p $WEB_DIR/templates
     
-    # Create main web application (app.py)
-    # 500 Error Fixes: 
-    # 1. Hardened read_users() to catch JSONDecodeError and FileNotFoundError.
-    # 2. Hardened write_users() to catch write/serialization errors and use default=str.
-    # 3. Added try/except blocks in routes to handle write_users failure gracefully (return 500 instead of crashing).
+    # Create main web application (app.py) - Error Handling Hardened
     cat > $WEB_DIR/app.py << 'EOF'
 from flask import Flask, render_template, request, jsonify, session
 import json
@@ -184,7 +176,7 @@ def read_users():
         logging.warning(f"Users file not found: {USERS_FILE}. Returning empty structure.")
         return {"users": [], "settings": {}}
     except json.JSONDecodeError as e:
-        # This is the most likely cause of initial 500 errors if the file is corrupted.
+        # Catches corruption in the JSON file.
         logging.error(f"JSON decode error in {USERS_FILE}. Data might be corrupted: {e}")
         return {"users": [], "settings": {}} 
     except Exception as e:
@@ -195,7 +187,7 @@ def write_users(data):
     """Writes users data, handles serialization errors."""
     try:
         with open(USERS_FILE, 'w') as f:
-            # Using default=str to ensure any unexpected non-serializable objects are safely converted to strings
+            # Use default=str to prevent TypeError (500 error) if non-serializable objects exist
             json.dump(data, f, indent=2, default=str)
     except Exception as e:
         logging.error(f"Error writing to {USERS_FILE}: {e}")
@@ -203,7 +195,7 @@ def write_users(data):
 
 def get_service_status():
     try:
-        # Use absolute path for systemctl for reliability
+        # Use absolute path for systemctl
         result = subprocess.run(['/bin/systemctl', 'is-active', 'agnudp'], 
                               capture_output=True, text=True, timeout=5)
         return result.stdout.strip()
@@ -255,15 +247,18 @@ def add_user():
     data = request.json
     users_data = read_users()
     
-    # Simple ID generation - better would be UUID or finding max ID
     new_id = max([u.get('id', 0) for u in users_data.get("users", [])]) + 1
     
+    try:
+        data_limit_int = int(data.get("data_limit", 1000))
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid data limit"}), 400
+        
     new_user = {
         "id": new_id,
         "username": data.get("username"),
         "password": data.get("password"),
-        # Ensure data_limit is an integer
-        "data_limit": int(data.get("data_limit", 1000)),
+        "data_limit": data_limit_int,
         "used_data": 0,
         "active": True,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -275,7 +270,6 @@ def add_user():
         write_users(users_data)
         return jsonify({"success": True})
     except Exception:
-        # Return 500 error if writing fails, which is logged by write_users()
         return jsonify({"success": False, "error": "Failed to save user data"}), 500
 
 @app.route('/api/users/<int:user_id>/toggle', methods=['POST'])
@@ -326,7 +320,6 @@ def restart_service():
         return jsonify({"success": False, "error": "Unauthorized"}), 401
         
     try:
-        # Use absolute path for systemctl and set a timeout
         subprocess.run(['/bin/systemctl', 'restart', 'agnudp'], check=True, timeout=5)
         return jsonify({"success": True})
     except subprocess.CalledProcessError as e:
@@ -343,7 +336,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)
 EOF
 
-    # Create HTML template (No changes needed here)
+    # Create HTML template (No change)
     cat > $WEB_DIR/templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -672,7 +665,15 @@ EOF
 </html>
 EOF
 
-    # Create web service (No changes needed here)
+    # Apply file permissions (FIX ADDED HERE)
+    chown -R root:root $CONFIG_DIR
+    chmod -R 755 $CONFIG_DIR
+    chmod 600 $CONFIG_FILE $USERS_FILE # Only root can read/write config files
+    
+    chown -R root:root $WEB_DIR
+    chmod -R 755 $WEB_DIR
+
+    # Create web service
     cat > /etc/systemd/system/agnudp-web.service << EOF
 [Unit]
 Description=AGN-UDP Web Interface
@@ -731,7 +732,7 @@ show_status() {
     echo -e "${GREEN}Username: $WEB_USER${NC}"
     echo -e "${GREEN}Password: $WEB_PASS${NC}"
     echo -e "\n${YELLOW}Important: Change the default credentials in $USERS_FILE${NC}"
-    echo -e "${YELLOW}Check the web panel logs for errors: journalctl -u agnudp-web -f${NC}"
+    echo -e "\n${CYAN}*** LOGS စစ်ဆေးရန် Command: journalctl -u agnudp-web -f ***${NC}"
 }
 
 # Main installation function
