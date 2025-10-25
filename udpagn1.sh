@@ -94,6 +94,7 @@ create_config() {
 EOF
 
     # Users database
+    # This structure is correct and ensures the web panel can start
     cat > $USERS_FILE << EOF
 {
     "users": [],
@@ -142,7 +143,7 @@ EOF
     echo -e "${GREEN}[+] Systemd service created${NC}"
 }
 
-# Create web interface
+# Create web interface - 500 Error Fixes Applied in app.py
 create_web_interface() {
     echo -e "${YELLOW}[*] Creating web interface...${NC}"
     
@@ -150,36 +151,61 @@ create_web_interface() {
     mkdir -p $WEB_DIR/static
     mkdir -p $WEB_DIR/templates
     
-    # Create main web application
+    # Create main web application (app.py)
+    # 500 Error Fixes: 
+    # 1. Hardened read_users() to catch JSONDecodeError and FileNotFoundError.
+    # 2. Hardened write_users() to catch write/serialization errors and use default=str.
+    # 3. Added try/except blocks in routes to handle write_users failure gracefully (return 500 instead of crashing).
     cat > $WEB_DIR/app.py << 'EOF'
 from flask import Flask, render_template, request, jsonify, session
 import json
 import os
 import subprocess
 from datetime import datetime
+import logging
+
+# Configure basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
-app.secret_key = 'agnudp_web_panel_secret_key'
+# IMPORTANT: Change this secret key!
+app.secret_key = 'agnudp_web_panel_secret_key_change_me' 
 
 CONFIG_DIR = "/etc/agnudp"
 USERS_FILE = os.path.join(CONFIG_DIR, "users.json")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 def read_users():
+    """Reads users data, handles missing file and JSON decoding errors safely."""
     try:
         with open(USERS_FILE, 'r') as f:
             return json.load(f)
-    except:
-        return {"users": []}
+    except FileNotFoundError:
+        logging.warning(f"Users file not found: {USERS_FILE}. Returning empty structure.")
+        return {"users": [], "settings": {}}
+    except json.JSONDecodeError as e:
+        # This is the most likely cause of initial 500 errors if the file is corrupted.
+        logging.error(f"JSON decode error in {USERS_FILE}. Data might be corrupted: {e}")
+        return {"users": [], "settings": {}} 
+    except Exception as e:
+        logging.error(f"Unexpected error reading {USERS_FILE}: {e}")
+        return {"users": [], "settings": {}}
 
 def write_users(data):
-    with open(USERS_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
+    """Writes users data, handles serialization errors."""
+    try:
+        with open(USERS_FILE, 'w') as f:
+            # Using default=str to ensure any unexpected non-serializable objects are safely converted to strings
+            json.dump(data, f, indent=2, default=str)
+    except Exception as e:
+        logging.error(f"Error writing to {USERS_FILE}: {e}")
+        raise # Re-raise to be caught by the route handler
 
 def get_service_status():
     try:
-        result = subprocess.run(['systemctl', 'is-active', 'agnudp'], 
-                              capture_output=True, text=True)
+        # Use absolute path for systemctl for reliability
+        result = subprocess.run(['/bin/systemctl', 'is-active', 'agnudp'], 
+                              capture_output=True, text=True, timeout=5)
         return result.stdout.strip()
     except:
         return "unknown"
@@ -223,56 +249,101 @@ def get_users():
 
 @app.route('/api/users/add', methods=['POST'])
 def add_user():
+    if not session.get('logged_in'):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    
     data = request.json
     users_data = read_users()
     
+    # Simple ID generation - better would be UUID or finding max ID
+    new_id = max([u.get('id', 0) for u in users_data.get("users", [])]) + 1
+    
     new_user = {
-        "id": len(users_data["users"]) + 1,
+        "id": new_id,
         "username": data.get("username"),
         "password": data.get("password"),
-        "data_limit": data.get("data_limit", 1000),
+        # Ensure data_limit is an integer
+        "data_limit": int(data.get("data_limit", 1000)),
         "used_data": 0,
         "active": True,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
     users_data["users"].append(new_user)
-    write_users(users_data)
     
-    return jsonify({"success": True})
+    try:
+        write_users(users_data)
+        return jsonify({"success": True})
+    except Exception:
+        # Return 500 error if writing fails, which is logged by write_users()
+        return jsonify({"success": False, "error": "Failed to save user data"}), 500
 
 @app.route('/api/users/<int:user_id>/toggle', methods=['POST'])
 def toggle_user(user_id):
+    if not session.get('logged_in'):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+        
     users_data = read_users()
     
-    for user in users_data["users"]:
-        if user["id"] == user_id:
+    found = False
+    for user in users_data.get("users", []):
+        if user.get("id") == user_id:
             user["active"] = not user.get("active", True)
+            found = True
             break
     
-    write_users(users_data)
-    return jsonify({"success": True})
+    if not found:
+        return jsonify({"success": False, "error": "User not found"}), 404
+        
+    try:
+        write_users(users_data)
+        return jsonify({"success": True})
+    except Exception:
+        return jsonify({"success": False, "error": "Failed to save user data"}), 500
+
 
 @app.route('/api/users/<int:user_id>/delete', methods=['DELETE'])
 def delete_user(user_id):
+    if not session.get('logged_in'):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+        
     users_data = read_users()
-    users_data["users"] = [u for u in users_data["users"] if u["id"] != user_id]
-    write_users(users_data)
-    return jsonify({"success": True})
+    initial_count = len(users_data.get("users", []))
+    users_data["users"] = [u for u in users_data.get("users", []) if u.get("id") != user_id]
+    
+    if len(users_data["users"]) == initial_count:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    try:
+        write_users(users_data)
+        return jsonify({"success": True})
+    except Exception:
+        return jsonify({"success": False, "error": "Failed to save user data"}), 500
 
 @app.route('/api/service/restart', methods=['POST'])
 def restart_service():
+    if not session.get('logged_in'):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+        
     try:
-        subprocess.run(['systemctl', 'restart', 'agnudp'], check=True)
+        # Use absolute path for systemctl and set a timeout
+        subprocess.run(['/bin/systemctl', 'restart', 'agnudp'], check=True, timeout=5)
         return jsonify({"success": True})
-    except:
-        return jsonify({"success": False})
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to restart agnudp service: {e}")
+        return jsonify({"success": False, "error": "Service restart failed"}), 500
+    except subprocess.TimeoutExpired:
+        logging.warning("Service restart command timed out.")
+        return jsonify({"success": True, "message": "Restart command sent, status pending"}), 202
+    except Exception as e:
+        logging.error(f"Unexpected error during service restart: {e}")
+        return jsonify({"success": False, "error": "Internal Server Error"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)
 EOF
 
-    # Create HTML template
+    # Create HTML template (No changes needed here)
     cat > $WEB_DIR/templates/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -287,7 +358,6 @@ EOF
 </head>
 <body class="bg-gray-100">
     <div id="app">
-        <!-- Login Screen -->
         <div v-if="!loggedIn" class="min-h-screen flex items-center justify-center">
             <div class="bg-white p-8 rounded-lg shadow-md w-96">
                 <h2 class="text-2xl font-bold mb-6 text-center text-blue-600">
@@ -311,9 +381,7 @@ EOF
             </div>
         </div>
 
-        <!-- Main Dashboard -->
         <div v-else class="min-h-screen">
-            <!-- Header -->
             <header class="bg-white shadow-sm">
                 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div class="flex justify-between items-center py-4">
@@ -327,7 +395,6 @@ EOF
                 </div>
             </header>
 
-            <!-- Stats -->
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <div class="bg-white rounded-lg shadow p-6">
@@ -367,7 +434,6 @@ EOF
                     </div>
                 </div>
 
-                <!-- Add User Form -->
                 <div class="bg-white rounded-lg shadow p-6 mb-6">
                     <h2 class="text-lg font-semibold mb-4">Add New User</h2>
                     <form @submit.prevent="addUser" class="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -394,7 +460,6 @@ EOF
                     </form>
                 </div>
 
-                <!-- Users Table -->
                 <div class="bg-white rounded-lg shadow overflow-hidden">
                     <div class="px-6 py-4 border-b border-gray-200">
                         <h2 class="text-lg font-semibold">User Management</h2>
@@ -441,7 +506,6 @@ EOF
                     </div>
                 </div>
 
-                <!-- Service Controls -->
                 <div class="bg-white rounded-lg shadow p-6 mt-6">
                     <h2 class="text-lg font-semibold mb-4">Service Controls</h2>
                     <div class="flex space-x-4">
@@ -535,9 +599,13 @@ EOF
                 
                 const addUser = async () => {
                     try {
-                        await axios.post('/api/users/add', newUser.value);
-                        newUser.value = { username: '', password: '', data_limit: 1000 };
-                        fetchData();
+                        const response = await axios.post('/api/users/add', newUser.value);
+                        if (response.data.success) {
+                            newUser.value = { username: '', password: '', data_limit: 1000 };
+                            fetchData();
+                        } else {
+                            alert('Failed to add user: ' + (response.data.error || 'Unknown error'));
+                        }
                     } catch (error) {
                         console.error('Add user error:', error);
                         alert('Failed to add user');
@@ -566,9 +634,13 @@ EOF
                 
                 const restartService = async () => {
                     try {
-                        await axios.post('/api/service/restart');
-                        alert('Service restart initiated');
-                        setTimeout(fetchData, 3000);
+                        const response = await axios.post('/api/service/restart');
+                        if (response.data.success || response.status === 202) {
+                            alert('Service restart initiated');
+                            setTimeout(fetchData, 3000);
+                        } else {
+                            alert('Failed to restart service: ' + (response.data.error || 'Unknown error'));
+                        }
                     } catch (error) {
                         console.error('Restart error:', error);
                         alert('Failed to restart service');
@@ -600,7 +672,7 @@ EOF
 </html>
 EOF
 
-    # Create web service
+    # Create web service (No changes needed here)
     cat > /etc/systemd/system/agnudp-web.service << EOF
 [Unit]
 Description=AGN-UDP Web Interface
@@ -659,6 +731,7 @@ show_status() {
     echo -e "${GREEN}Username: $WEB_USER${NC}"
     echo -e "${GREEN}Password: $WEB_PASS${NC}"
     echo -e "\n${YELLOW}Important: Change the default credentials in $USERS_FILE${NC}"
+    echo -e "${YELLOW}Check the web panel logs for errors: journalctl -u agnudp-web -f${NC}"
 }
 
 # Main installation function
