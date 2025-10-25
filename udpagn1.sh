@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AGN-UDP Web Panel Manager
-# Complete Management Script with Web Interface
+# Complete Installation Script with Web Interface
 
 # Colors
 RED='\033[0;31m'
@@ -20,6 +20,8 @@ LOG_FILE="/var/log/agnudp.log"
 WEB_DIR="/var/www/agnudp"
 WEB_PORT="8080"
 SERVER_PORT="443"
+WEB_USER="admin"
+WEB_PASS="admin123"  # Change this in production!
 
 # Check root
 check_root() {
@@ -97,7 +99,11 @@ EOF
     "users": [],
     "settings": {
         "web_port": $WEB_PORT,
-        "server_port": $SERVER_PORT
+        "server_port": $SERVER_PORT,
+        "web_credentials": {
+            "username": "$WEB_USER",
+            "password": "$WEB_PASS"
+        }
     }
 }
 EOF
@@ -188,8 +194,10 @@ def login():
     username = data.get('username')
     password = data.get('password')
     
-    # Simple authentication (in production, use proper authentication)
-    if username == "admin" and password == "admin123":
+    users_data = read_users()
+    web_creds = users_data.get("settings", {}).get("web_credentials", {})
+    
+    if username == web_creds.get("username") and password == web_creds.get("password"):
         session['logged_in'] = True
         return jsonify({"success": True})
     return jsonify({"success": False})
@@ -274,6 +282,8 @@ EOF
     <title>AGN-UDP Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.47/dist/vue.global.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 </head>
 <body class="bg-gray-100">
     <div id="app">
@@ -298,9 +308,6 @@ EOF
                         Login
                     </button>
                 </form>
-                <p class="mt-4 text-center text-sm text-gray-600">
-                    Default: admin / admin123
-                </p>
             </div>
         </div>
 
@@ -413,4 +420,270 @@ EOF
                                     <td class="px-6 py-4 whitespace-nowrap">
                                         <span :class="['px-2 inline-flex text-xs leading-5 font-semibold rounded-full', 
                                                      user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                                            {{ user.active }}
+                                            {{ user.active ? 'Active' : 'Inactive' }}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <button @click="toggleUser(user.id)" 
+                                                :class="['mr-2 px-3 py-1 rounded-md', 
+                                                       user.active ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-500 hover:bg-green-600',
+                                                       'text-white transition duration-200']">
+                                            {{ user.active ? 'Deactivate' : 'Activate' }}
+                                        </button>
+                                        <button @click="deleteUser(user.id)" 
+                                                class="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition duration-200">
+                                            Delete
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Service Controls -->
+                <div class="bg-white rounded-lg shadow p-6 mt-6">
+                    <h2 class="text-lg font-semibold mb-4">Service Controls</h2>
+                    <div class="flex space-x-4">
+                        <button @click="restartService" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200">
+                            <i class="fas fa-sync-alt mr-2"></i>Restart Service
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed } = Vue;
+        
+        createApp({
+            setup() {
+                const loggedIn = ref(false);
+                const loginData = ref({
+                    username: '',
+                    password: ''
+                });
+                
+                const stats = ref({
+                    total_users: 0,
+                    active_users: 0,
+                    service_status: 'unknown'
+                });
+                
+                const users = ref([]);
+                const newUser = ref({
+                    username: '',
+                    password: '',
+                    data_limit: 1000
+                });
+                
+                const serviceStatusClass = computed(() => {
+                    return stats.value.service_status === 'active' 
+                        ? 'bg-green-100 text-green-600' 
+                        : 'bg-red-100 text-red-600';
+                });
+                
+                const serviceStatusTextClass = computed(() => {
+                    return stats.value.service_status === 'active' 
+                        ? 'text-green-600' 
+                        : 'text-red-600';
+                });
+                
+                const checkLogin = () => {
+                    if (localStorage.getItem('agnudp_loggedIn') === 'true') {
+                        loggedIn.value = true;
+                        fetchData();
+                    }
+                };
+                
+                const login = async () => {
+                    try {
+                        const response = await axios.post('/api/login', loginData.value);
+                        if (response.data.success) {
+                            loggedIn.value = true;
+                            localStorage.setItem('agnudp_loggedIn', 'true');
+                            fetchData();
+                        } else {
+                            alert('Invalid credentials');
+                        }
+                    } catch (error) {
+                        console.error('Login error:', error);
+                        alert('Login failed');
+                    }
+                };
+                
+                const logout = () => {
+                    loggedIn.value = false;
+                    localStorage.removeItem('agnudp_loggedIn');
+                };
+                
+                const fetchData = async () => {
+                    try {
+                        const [dashboardRes, usersRes] = await Promise.all([
+                            axios.get('/api/dashboard'),
+                            axios.get('/api/users')
+                        ]);
+                        
+                        stats.value = dashboardRes.data;
+                        users.value = usersRes.data;
+                    } catch (error) {
+                        console.error('Fetch error:', error);
+                    }
+                };
+                
+                const addUser = async () => {
+                    try {
+                        await axios.post('/api/users/add', newUser.value);
+                        newUser.value = { username: '', password: '', data_limit: 1000 };
+                        fetchData();
+                    } catch (error) {
+                        console.error('Add user error:', error);
+                        alert('Failed to add user');
+                    }
+                };
+                
+                const toggleUser = async (userId) => {
+                    try {
+                        await axios.post(`/api/users/${userId}/toggle`);
+                        fetchData();
+                    } catch (error) {
+                        console.error('Toggle user error:', error);
+                    }
+                };
+                
+                const deleteUser = async (userId) => {
+                    if (confirm('Are you sure you want to delete this user?')) {
+                        try {
+                            await axios.delete(`/api/users/${userId}/delete`);
+                            fetchData();
+                        } catch (error) {
+                            console.error('Delete user error:', error);
+                        }
+                    }
+                };
+                
+                const restartService = async () => {
+                    try {
+                        await axios.post('/api/service/restart');
+                        alert('Service restart initiated');
+                        setTimeout(fetchData, 3000);
+                    } catch (error) {
+                        console.error('Restart error:', error);
+                        alert('Failed to restart service');
+                    }
+                };
+                
+                // Initialize
+                checkLogin();
+                
+                return {
+                    loggedIn,
+                    loginData,
+                    stats,
+                    users,
+                    newUser,
+                    serviceStatusClass,
+                    serviceStatusTextClass,
+                    login,
+                    logout,
+                    addUser,
+                    toggleUser,
+                    deleteUser,
+                    restartService
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
+EOF
+
+    # Create web service
+    cat > /etc/systemd/system/agnudp-web.service << EOF
+[Unit]
+Description=AGN-UDP Web Interface
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$WEB_DIR
+ExecStart=/usr/bin/python3 $WEB_DIR/app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable agnudp-web
+    echo -e "${GREEN}[+] Web interface created${NC}"
+}
+
+# Configure firewall
+configure_firewall() {
+    echo -e "${YELLOW}[*] Configuring firewall...${NC}"
+    
+    ufw allow $SERVER_PORT/udp
+    ufw allow $WEB_PORT/tcp
+    ufw allow ssh
+    
+    echo -e "${GREEN}[+] Firewall configured${NC}"
+}
+
+# Start services
+start_services() {
+    echo -e "${YELLOW}[*] Starting services...${NC}"
+    
+    systemctl start agnudp
+    systemctl start agnudp-web
+    
+    echo -e "${GREEN}[+] Services started${NC}"
+}
+
+# Show status
+show_status() {
+    echo -e "\n${BLUE}=== Installation Summary ===${NC}"
+    echo -e "${GREEN}AGN-UDP installed at: /usr/local/bin/agnudp${NC}"
+    echo -e "${GREEN}Configuration directory: $CONFIG_DIR${NC}"
+    echo -e "${GREEN}Web interface directory: $WEB_DIR${NC}"
+    echo -e "\n${BLUE}=== Service Status ===${NC}"
+    systemctl status agnudp --no-pager -l
+    echo -e "\n${BLUE}=== Web Interface Status ===${NC}"
+    systemctl status agnudp-web --no-pager -l
+    echo -e "\n${BLUE}=== Access Information ===${NC}"
+    echo -e "${GREEN}Web Panel URL: http://$(curl -s ifconfig.me):$WEB_PORT${NC}"
+    echo -e "${GREEN}Username: $WEB_USER${NC}"
+    echo -e "${GREEN}Password: $WEB_PASS${NC}"
+    echo -e "\n${YELLOW}Important: Change the default credentials in $USERS_FILE${NC}"
+}
+
+# Main installation function
+main_install() {
+    check_root
+    install_dependencies
+    install_agnudp_binary
+    create_config
+    create_service
+    create_web_interface
+    configure_firewall
+    start_services
+    show_status
+    
+    echo -e "\n${GREEN}[+] AGN-UDP Web Panel installation completed successfully!${NC}"
+}
+
+# Check if script is called with install parameter
+if [ "$1" == "install" ]; then
+    main_install
+else
+    echo -e "${BLUE}AGN-UDP Web Panel Management Script${NC}"
+    echo "Usage:"
+    echo "  ./agnudp-web-panel.sh install  - Install AGN-UDP with web panel"
+    echo "  systemctl status agnudp        - Check AGN-UDP status"
+    echo "  systemctl status agnudp-web    - Check web panel status"
+    echo -e "\n${YELLOW}Note: After installation, access the web panel at http://your-server-ip:8080${NC}"
+fi
