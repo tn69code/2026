@@ -1,6 +1,6 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
-# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
+# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL + MAX USERS (CONCURRENCY) FEATURE ==================================
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -8,7 +8,7 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး)${Z}"
+    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - Max Users/Concurrency ထည့်သွင်းပြီး${Z}"
     echo -e "$LINE"
     echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
@@ -172,7 +172,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 MODIFIED: users_table.html (Added Online Users column and Expires Edit Modal)
+# 💡 MODIFIED: users_table.html (Added Max Users column, Modified Online/Status logic)
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -182,7 +182,8 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             <th><i class="icon">👤</i> User</th>
             <th><i class="icon">🔑</i> Password</th>
             <th><i class="icon">⏰</i> Expires</th>
-            <th><i class="icon">💻</i> Online Users</th> {# 💡 NEW COLUMN #}
+            <th><i class="icon">👥</i> Max Users</th> {# 💡 NEW COLUMN #}
+            <th><i class="icon">💻</i> Online Users</th> 
             <th><i class="icon">🚦</i> Status</th> 
             <th><i class="icon">❌</i> Action</th>
           </tr>
@@ -225,12 +226,22 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 
             </td>
             
-            <td data-label="Online Users"> {# 💡 NEW ONLINE USERS DATA #}
+            {# 💡 NEW: Max Users Data #}
+            <td data-label="Max Users">
+                {{ u.max_users }}
+            </td>
+
+            <td data-label="Online Users"> {# 💡 MODIFIED ONLINE USERS DATA #}
                 {% if u.online_count is not none %}
                     {% if u.online_count > 0 %}
-                        <span class="pill pill-online">{{ u.online_count }}</span>
+                        {# 💡 MODIFIED: Compare online_count with max_users #}
+                        {% if u.online_count > u.max_users %}
+                            <span class="pill pill-danger">{{ u.online_count }} / {{ u.max_users }} (လွန်)</span> {# Over limit #}
+                        {% else %}
+                            <span class="pill pill-online">{{ u.online_count }} / {{ u.max_users }}</span>
+                        {% endif %}
                     {% else %}
-                        <span class="pill pill-offline">0</span>
+                        <span class="pill pill-offline">0 / {{ u.max_users }}</span>
                     {% endif %}
                 {% else %}
                     <span class="pill pill-unknown">N/A</span>
@@ -245,6 +256,10 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                 {# Expiring Soon (Today or Tomorrow) #}
                 {% elif u.expiring_soon %}
                     <span class="pill pill-expiring"><i class="icon">⚠️</i> Expiring Soon</span>
+                    
+                {# 💡 NEW: Online Count Exceeds Max Users #}
+                {% elif u.online_count is not none and u.online_count > u.max_users %}
+                    <span class="pill pill-danger"><i class="icon">🚫</i> Over Limit</span>
                     
                 {# Active (Including no expiration set, or 2 days or more left) #}
                 {% else %}
@@ -301,7 +316,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   </div>
 </div>
 
-{# 💡 NEW: EXPIRES EDIT MODAL #}
+{# 💡 NEW: EXPIRES EDIT MODAL (UNCHANGED) #}
 <div id="expiresModal" class="modal">
   <div class="modal-content" style="max-width: 350px;"> {# Slightly wider for date input #}
     <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
@@ -460,6 +475,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 .pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
 .pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
 .pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
+.pill-danger { background-color: #f8d7da; color: var(--danger); } /* Reddish for limit exceeded */
 
 
 @media (max-width: 768px) {
@@ -664,6 +680,7 @@ tr:hover { background-color: #e9ecef; }
 .pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
 .pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
 .pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
+.pill-danger { background-color: #f8d7da; color: var(--danger); } /* Reddish for limit exceeded */
 
 
 /* Days Remaining Text Style */
@@ -823,7 +840,7 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: conntrack check, prepare_user_data, edit_expires route, LOGIN PASSWORD TYPE)
+# 💡 Web Panel (Flask - web.py) (MODIFIED: max_users field in data structures and routes, new input field in HTML)
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -849,7 +866,7 @@ SERVER_IP_FALLBACK = get_server_ip()
 # 💡 NEW: Contact Link ကို Environment ကနေ ယူခြင်း
 CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link)
+# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Max Users input and Contact Link)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
@@ -999,7 +1016,7 @@ h1 { font-size: 22px; color: var(--dark); margin-bottom: 5px; }
     color: var(--secondary);
     background: transparent; 
 }
-input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"] {
+input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"], input[name="max_users"] {
     width: 100%;
     padding: 12px 10px;
     border: none; 
@@ -1221,6 +1238,7 @@ text {
                         <p><i class="icon">🔥</i> Server IP: <b>${data.ip || '{{ IP }}'}</b></p>  
                         <p><i class="icon">👤</i> Username: <b>${data.user}</b></p>
                         <p><i class="icon">🔑</i> Password: <b>${data.password}</b></p>
+                        <p><i class="icon">👥</i> Max Users: <b>${data.max_users || 1}</b></p> {# 💡 NEW: Display Max Users #}
                         <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>                   
                     `;
                 }
@@ -1258,6 +1276,18 @@ text {
                 <input type="password" id="password" name="password" placeholder="Password" required>
             </div>
         </div>
+        
+        {# 💡 NEW INPUT FIELD: Max Users #}
+        <div class="row">
+            <div>
+            <text> <label><i class="icon">👥</i> အများဆုံး သုံးစွဲသူ (Max Users)</label></text>
+            <div class="input-field-wrapper">
+                <i class="icon">🔢</i>
+                <input name="max_users" required placeholder="ဥပမာ: 1" value="1">
+            </div>
+            </div>
+        </div>
+        
         <div class="row">
             <div>
             <text> <label><i class="icon"></i>Add (expiration date)</label></text>
@@ -1325,7 +1355,10 @@ def load_users():
     out.append({"user":u.get("user",""),
                 "password":u.get("password",""),
                 "expires":u.get("expires",""),
-                "port":str(u.get("port","")) if u.get("port","")!="" else ""})
+                "port":str(u.get("port","")) if u.get("port","")!="" else "",
+                # 💡 ADDED: max_users field
+                "max_users":int(u.get("max_users") or 1) # Default to 1
+               })
   return out
 def save_users(users): write_json_atomic(USERS_FILE, users)
 def get_listen_port_from_config():
@@ -1521,7 +1554,8 @@ def prepare_user_data():
         "days_remaining": calculate_days_remaining(u.get("expires","")), # 💡 New field for display
         "port":u.get("port",""),
         "online_count": get_user_online_count(u.get("port","")), # 💡 NEW: Online Count
-        "expiring_soon": is_expiring_soon(u.get("expires","")) 
+        "expiring_soon": is_expiring_soon(u.get("expires","")),
+        "max_users": u.get("max_users", 1) # 💡 ADDED: max_users field (default 1)
       }))
     view.sort(key=lambda x:(x.user or "").lower())
     today=datetime.now().strftime("%Y-%m-%d")
@@ -1606,6 +1640,16 @@ def add_user():
   expires=(request.form.get("expires") or "").strip()
   port=(request.form.get("port") or "").strip() 
   ip = (request.form.get("ip") or "").strip() or SERVER_IP_FALLBACK
+  
+  # 💡 NEW: Max Users ကို ဖတ်ခြင်း
+  max_users_str = (request.form.get("max_users") or "1").strip()
+  try:
+    max_users = int(max_users_str)
+    if max_users <= 0: raise ValueError
+  except ValueError:
+    session["err"] = "❌ Max Users အရေအတွက် မမှန်ပါ"
+    return redirect(url_for('index'))
+
 
   # 💡 NEW FIX: Myanmar Unicode Check (Myanmar Unicode Range U+1000 to U+109F)
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
@@ -1634,7 +1678,9 @@ def add_user():
   users=load_users(); replaced=False
   for u in users:
     if u.get("user","").lower()==user.lower():
-      u["password"]=password; u["expires"]=expires; u["port"]=port; replaced=True; break
+      u["password"]=password; u["expires"]=expires; u["port"]=port; 
+      u["max_users"]=max_users # 💡 Update max_users on replace
+      replaced=True; break
   if not replaced:
     # 💡 NEW FIX: Pick a free port if not provided (Important for conntrack tracking)
     if not port:
@@ -1643,7 +1689,7 @@ def add_user():
             session["err"] = "❌ အသုံးပြုရန် Port မရှိတော့ပါ"
             return redirect(url_for('index'))
             
-    users.append({"user":user,"password":password,"expires":expires,"port":port})
+    users.append({"user":user,"password":password,"expires":expires,"port":port, "max_users":max_users}) # 💡 Save max_users on new user
   
   save_users(users)
   sync_config_passwords()
@@ -1652,13 +1698,14 @@ def add_user():
       "user": user,
       "password": password,
       "expires": expires,
-      "ip": ip 
+      "ip": ip,
+      "max_users": max_users # 💡 Add to message
   }
   
   session["msg"] = json.dumps(msg_dict)
   return redirect(url_for('index'))
 
-# 💡 NEW ROUTE: Edit Expiration Date
+# 💡 NEW ROUTE: Edit Expiration Date (UNCHANGED)
 @app.route("/edit_expires", methods=["POST"])
 def edit_user_expires():
   if not require_login(): return redirect(url_for('login'))
@@ -1699,7 +1746,7 @@ def edit_user_expires():
   return redirect(url_for('users_table_view'))
 # 💡 END NEW ROUTE
 
-# 💡 EXISTING ROUTE: Password Edit Function (MODIFIED for Myanmar Char Check)
+# 💡 EXISTING ROUTE: Password Edit Function (UNCHANGED)
 @app.route("/edit", methods=["POST"])
 def edit_user_password():
   if not require_login(): return redirect(url_for('login'))
@@ -1773,6 +1820,7 @@ def api_users():
     for u in users: 
       u["expiring_soon"]=is_expiring_soon(u.get("expires",""))
       u["online_count"]=get_user_online_count(u.get("port","")) # 💡 API Update
+      u["max_users"]=u.get("max_users", 1) # 💡 API Update
     return jsonify(users)
   
   if request.method=="POST":
@@ -1782,6 +1830,15 @@ def api_users():
     expires=(data.get("expires") or "").strip()
     port=str(data.get("port") or "").strip()
     
+    # 💡 NEW: Max Users ကို ဖတ်ခြင်း
+    max_users_str = str(data.get("max_users") or "1").strip()
+    try:
+      max_users = int(max_users_str)
+      if max_users <= 0: return jsonify({"ok":False,"err":"invalid max_users"}),400
+    except ValueError:
+      return jsonify({"ok":False,"err":"invalid max_users"}),400
+    
+
     # 💡 NEW FIX: Myanmar Unicode Check for API
     myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
     if myanmar_chars_pattern.search(user) or myanmar_chars_pattern.search(password):
@@ -1797,14 +1854,16 @@ def api_users():
     users=load_users(); replaced=False
     for u in users:
       if u.get("user","").lower()==user.lower():
-        u["password"]=password; u["expires"]=expires; u["port"]=port; replaced=True; break
+        u["password"]=password; u["expires"]=expires; u["port"]=port;
+        u["max_users"]=max_users; # 💡 Update max_users
+        replaced=True; break
     if not replaced:
       # 💡 NEW FIX: Pick a free port if not provided (API)
       if not port:
           port = pick_free_port()
           if not port:
               return jsonify({"ok": False, "err": "No free port available"}), 500
-      users.append({"user":user,"password":password,"expires":expires,"port":port})
+      users.append({"user":user,"password":password,"expires":expires,"port":port, "max_users":max_users}) # 💡 Save max_users
     save_users(users)
     sync_config_passwords()
     return jsonify({"ok":True})
