@@ -1,8 +1,6 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
 # ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
-# 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX
-# 💡 MODIFICATION REQUEST: Shorten 'Edit Expires' and 'Edit Limit' buttons & make their Modals the same width as 'Password Edit' modal.
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -10,7 +8,7 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန် ပြင်ဆင်ပြီး)${Z}"
+    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး)${Z}"
     echo -e "$LINE"
     echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
@@ -174,7 +172,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 MODIFIED: users_table.html (Added Online Users column, Expires Edit Modal, Limit Count Column, Limit Count Edit Modal)
+# 💡 MODIFIED: users_table.html (Added Online Users column and Expires Edit Modal)
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -185,14 +183,13 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             <th><i class="icon">🔑</i> Password</th>
             <th><i class="icon">⏰</i> Expires</th>
             <th><i class="icon">💻</i> Online Users</th> {# 💡 NEW COLUMN #}
-            <th><i class="icon">👥</i> Limit</th> {# 💡 NEW COLUMN #}
             <th><i class="icon">🚦</i> Status</th> 
             <th><i class="icon">❌</i> Action</th>
           </tr>
       </thead>
       <tbody>
           {% for u in users %}
-          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% elif u.is_over_limit %}over-limit{% endif %}"> {# 💡 ADDED over-limit CLASS #}
+          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% endif %}">
             <td data-label="User">{% if u.expires and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
             <td data-label="Password">{% if u.expires and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
             <td data-label="Expires">
@@ -224,8 +221,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                 {% else %}
                     <span class="muted">—</span>
                 {% endif %}
-                {# 💡 MODIFIED BUTTON TEXT #}
-                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> 
+                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> {# 💡 EXPIRES EDIT BUTTON #}
 
             </td>
             
@@ -240,22 +236,6 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                     <span class="pill pill-unknown">N/A</span>
                 {% endif %}
             </td>
-            
-            <td data-label="Limit"> {# 💡 NEW LIMIT DATA #}
-                {% if u.limit_count is not none %}
-                    {% if u.limit_count > 1 %}
-                        <span class="pill pill-limit-multi">{{ u.limit_count }}</span>
-                    {% elif u.limit_count == 1 %}
-                        <span class="pill pill-limit-single">{{ u.limit_count }}</span>
-                    {% else %}
-                        <span class="pill pill-limit-default">N/A (Limit: 1)</span>
-                    {% endif %}
-                {% else %}
-                    <span class="pill pill-limit-default">N/A (Limit: 1)</span>
-                {% endif %}
-                {# 💡 MODIFIED BUTTON TEXT #}
-                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button>
-            </td>
 
             <td data-label="Status">
                 {# Flask's is_expiring_soon() and expiration logic determines the status #}
@@ -266,11 +246,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                 {% elif u.expiring_soon %}
                     <span class="pill pill-expiring"><i class="icon">⚠️</i> Expiring Soon</span>
                     
-                {# Over Limit #}
-                {% elif u.is_over_limit %}
-                    <span class="pill pill-over-limit"><i class="icon">❌</i> Over Limit</span> {# 💡 NEW STATUS #}
-
-                {# Active (Including no expiration set, or 2 days or more left, and not over limit) #}
+                {# Active (Including no expiration set, or 2 days or more left) #}
                 {% else %}
                     <span class="pill ok"><i class="icon">🟢</i> Active</span>
                 {% endif %}
@@ -325,9 +301,9 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   </div>
 </div>
 
-{# 💡 NEW: EXPIRES EDIT MODAL (MODIFIED: max-width removed to inherit from CSS) #}
+{# 💡 NEW: EXPIRES EDIT MODAL #}
 <div id="expiresModal" class="modal">
-  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
+  <div class="modal-content" style="max-width: 350px;"> {# Slightly wider for date input #}
     <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
     <h2 class="section-title"><i class="icon">⏰</i> Change Expiry Date</h2>
     <form method="post" action="/edit_expires"> {# NEW ROUTE #}
@@ -354,35 +330,6 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 </div>
 {# 💡 END NEW EXPIRES EDIT MODAL #}
 
-{# 💡 NEW: LIMIT EDIT MODAL (MODIFIED: max-width removed to inherit from CSS) #}
-<div id="limitModal" class="modal">
-  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
-    <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
-    <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
-    <form method="post" action="/edit_limit"> {# NEW ROUTE #}
-        <input type="hidden" id="limit-edit-user" name="user">
-        
-        <div class="input-group">
-            <label for="limit-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
-            <div class="input-field-wrapper is-readonly">
-                <input type="text" id="limit-current-user-display" name="current_user_display" readonly>
-            </div>
-        </div>
-        
-        <div class="input-group">
-            <label for="new-limit" class="input-label"><i class="icon">🔢</i> Max Users</label>
-            <div class="input-field-wrapper">
-                <input type="number" id="new-limit" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1 မှ 10)" min="1" max="10" required>
-            </div>
-            <p class="input-hint">ဤအကောင့်အတွက် အများဆုံး သုံးစွဲသူအရေအတွက် (ပုံမှန်- 1)</p>
-        </div>
-        
-        <button class="save-btn modal-save-btn" type="submit">Limit အသစ် သိမ်းမည်</button>
-    </form>
-  </div>
-</div>
-{# 💡 END NEW LIMIT EDIT MODAL #}
-
 
 <style>
 /* 💡 MODAL UI UPDATE START (UNCHANGED) */
@@ -392,7 +339,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   padding: 25px; 
   border: none; /* Remove default border */
   width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
+  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ */
   border-radius: 12px;
   position: relative;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2); /* Stronger, modern shadow */
@@ -482,42 +429,20 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
 .btn-delete:hover { background-color: #c82333; }
 
-/* 💡 MODIFIED BUTTON: Expires Edit Button */
+/* 💡 NEW BUTTON: Expires Edit Button */
 .btn-edit-expires { 
     background-color: var(--primary); 
     color: white; 
     border: none; 
-    padding: 3px 6px; /* Reduced padding */
+    padding: 3px 6px; 
     border-radius: 4px; 
     cursor: pointer; 
     font-size: 0.75em; 
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
-    display: inline-block; 
-    width: 50px; /* 💡 Set fixed width */
-    text-align: center;
 }
 .btn-edit-expires:hover { background-color: var(--primary-dark); }
-
-/* 💡 MODIFIED BUTTON: Limit Edit Button */
-.btn-edit-limit { 
-    background-color: var(--secondary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px; /* Reduced padding */
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    display: inline-block;
-    width: 50px; /* 💡 Set fixed width */
-    text-align: center;
-}
-.btn-edit-limit:hover { background-color: #5a6268; }
-
 
 /* Days Remaining Text Style (UNCHANGED) */
 .days-remaining {
@@ -536,12 +461,6 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 .pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
 .pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
 
-/* 💡 NEW PILL STYLES for Limit */
-.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
-.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
-.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
-.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
-
 
 @media (max-width: 768px) {
     /* 💡 MODIFIED: Column count changed, need to adjust data-label padding */
@@ -555,18 +474,10 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
         max-width: 280px; /* 💡 Mobile အတွက် ပိုသေးအောင် လျှော့ချသည်။ */
     }
     .days-remaining { display: block; text-align: right; }
-    /* 💡 MODIFIED BUTTONS FOR MOBILE */
-    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-
+    .btn-edit-expires { display: block; margin-left: auto; }
 
 }
 /* 💡 MODAL UI UPDATE END */
-/* 💡 NEW ROW STYLE: Over Limit */
-tr.over-limit { 
-    border-left: 5px solid var(--danger); 
-    background-color: rgba(220, 53, 69, 0.1); /* Light red background */
-}
 </style>
 
 <script>
@@ -590,27 +501,14 @@ tr.over-limit {
         
         document.getElementById('expiresModal').style.display = 'block';
     }
-    
-    // 💡 NEW JAVASCRIPT: Handle Limit Modal Display
-    function showLimitModal(user, limit) {
-        document.getElementById('limit-edit-user').value = user;
-        document.getElementById('limit-current-user-display').value = user; 
-        // Default to 1 if limit is 'None' or empty
-        document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1; 
-        
-        document.getElementById('limitModal').style.display = 'block';
-    }
 
-    // Close modal when clicking outside of it (MODIFIED to check all modals)
+    // Close modal when clicking outside of it (MODIFIED to check both modals)
     window.onclick = function(event) {
         if (event.target == document.getElementById('editModal')) {
             document.getElementById('editModal').style.display = 'none';
         }
         if (event.target == document.getElementById('expiresModal')) {
             document.getElementById('expiresModal').style.display = 'none';
-        }
-        if (event.target == document.getElementById('limitModal')) {
-            document.getElementById('limitModal').style.display = 'none';
         }
     }
 </script>
@@ -742,9 +640,6 @@ tr:hover { background-color: #e9ecef; }
     .delform { display: block; text-align: right; }
     .btn-delete { width: 80px; padding: 6px 8px; font-size: 0.8em; margin-top: 5px;}
     .days-remaining { display: block !important; }
-    /* 💡 MODIFIED BUTTONS FOR MOBILE */
-    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
 }
 /* Desktop Navigation Hidden */
 .main-nav { display: none; } 
@@ -770,12 +665,6 @@ tr:hover { background-color: #e9ecef; }
 .pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
 .pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
 
-/* 💡 NEW PILL STYLES for Limit and Over Limit */
-.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
-.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
-.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
-.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
-
 
 /* Days Remaining Text Style */
 .days-remaining {
@@ -793,12 +682,10 @@ tr:hover { background-color: #e9ecef; }
 /* Row Styles for Expiry */
 tr.expired td { opacity: 0.6; text-decoration-color: var(--danger); }
 tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba(255, 193, 7, 0.1); } 
-tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220, 53, 69, 0.1); } 
 
 
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s;}
 .btn-delete:hover { background-color: #c82333; }
-/* 💡 MODIFIED BUTTON: Expires Edit Button - Matches Table HTML change */
 .btn-edit-expires { 
     background-color: var(--primary); 
     color: white; 
@@ -810,23 +697,6 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
-    width: 50px; 
-    text-align: center;
-}
-/* 💡 MODIFIED BUTTON: Limit Edit Button - Matches Table HTML change */
-.btn-edit-limit { 
-    background-color: var(--secondary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px; 
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    width: 50px; 
-    text-align: center;
 }
 
 /* 💡 New/Updated styles for Edit Modal (Must be included here for the HTML wrapper) */
@@ -845,7 +715,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
   padding: 25px; 
   border: none; 
   width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
+  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ */
   border-radius: 12px;
   position: relative;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2); 
@@ -953,7 +823,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: load_users, prepare_user_data, /add, /edit_limit, HTML for limit input, login password type)
+# 💡 Web Panel (Flask - web.py) (MODIFIED: conntrack check, prepare_user_data, edit_expires route, LOGIN PASSWORD TYPE)
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -967,9 +837,7 @@ LOGO_URL = "https://zivpn-web.free.nf/zivpn-icon.png"
 
 def get_server_ip():
     try:
-        # Use a more reliable method to get the primary, external IP if possible
         result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, check=True)
-        # 💡 FIX: Split by space, take the first IP, and trim
         ip = result.stdout.strip().split()[0]
         if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
             return ip
@@ -981,7 +849,7 @@ SERVER_IP_FALLBACK = get_server_ip()
 # 💡 NEW: Contact Link ကို Environment ကနေ ယူခြင်း
 CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link and New Input Field)
+# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
@@ -1131,7 +999,7 @@ h1 { font-size: 22px; color: var(--dark); margin-bottom: 5px; }
     color: var(--secondary);
     background: transparent; 
 }
-input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"], input[type="number"] {
+input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"] {
     width: 100%;
     padding: 12px 10px;
     border: none; 
@@ -1343,7 +1211,7 @@ text {
             if (data.user) { 
                 const card = document.createElement('div');
                 card.className = 'user-info-card';
-                // Check if the message is from /edit or /edit_expires or /edit_limit route
+                // Check if the message is from /edit or /edit_expires route
                 if (data.message) {
                     card.innerHTML = data.message;
                 } else {
@@ -1353,8 +1221,7 @@ text {
                         <p><i class="icon">🔥</i> Server IP: <b>${data.ip || '{{ IP }}'}</b></p>  
                         <p><i class="icon">👤</i> Username: <b>${data.user}</b></p>
                         <p><i class="icon">🔑</i> Password: <b>${data.password}</b></p>
-                        <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>
-                        <p><i class="icon">👥</i> Limit: <b>${data.limit_count || '1'}</b></p> {# 💡 Added Limit Count #}
+                        <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>                   
                     `;
                 }
                 
@@ -1399,16 +1266,6 @@ text {
                 <input name="expires" required placeholder="Example : 2025-12-31 or 30">
             </div></tak1>
             </div>
-            
-            {# 💡 NEW INPUT FIELD: Limit Count #}
-            <div>
-            <text> <label><i class="icon"></i>User Limit Count</label></text>
-            <div class="input-field-wrapper">
-                <i class="icon">👥</i>
-                <input type="number" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1-10)" min="1" max="10" value="1" required>
-            </div>
-            </div>
-            
         </div>
         <div class="input-group">
             <label><i class="icon"></i>Server IP (Click to Copy)</label> 
@@ -1468,9 +1325,7 @@ def load_users():
     out.append({"user":u.get("user",""),
                 "password":u.get("password",""),
                 "expires":u.get("expires",""),
-                "port":str(u.get("port","")) if u.get("port","")!="" else "",
-                "limit_count": int(u.get("limit_count", 1)) # 💡 NEW: Load Limit Count (default to 1)
-                })
+                "port":str(u.get("port","")) if u.get("port","")!="" else ""})
   return out
 def save_users(users): write_json_atomic(USERS_FILE, users)
 def get_listen_port_from_config():
@@ -1511,9 +1366,8 @@ def get_user_online_count(port):
         source_ips = re.findall(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', result)
         
         # Count unique IPs that are NOT the server's own IP (to avoid counting NAT loopback or internal communication)
-        # 💡 FIX: get_server_ip() returns a single string, compare against it.
-        server_ip_single = SERVER_IP_FALLBACK.split()[0]
-        unique_online_ips = set(ip for ip in source_ips if ip != server_ip_single)
+        server_ip_list = SERVER_IP_FALLBACK.split() # In case it returns multiple IPs
+        unique_online_ips = set(ip for ip in source_ips if ip not in server_ip_list)
 
         return len(unique_online_ips)
     except Exception:
@@ -1619,10 +1473,6 @@ def sync_config_passwords(mode="mirror"):
           except ValueError:
               is_valid = True 
 
-      # 💡 NEW: Online Count check (Users over limit are NOT removed from passwords.json 
-      # but are visually flagged in the web panel. The actual blocking is done by the firewall/OS 
-      # which is what conntrack tracks. We only remove expired users from the passwords list).
-      
       if is_valid and u.get("password"):
           valid_passwords.add(str(u["password"]))
 
@@ -1662,10 +1512,6 @@ def prepare_user_data():
       if u.get("expires"):
           try: expires_date_obj = datetime.strptime(u.get("expires"), "%Y-%m-%d").date()
           except ValueError: pass
-      
-      online_count = get_user_online_count(u.get("port","")) # 💡 Get online count
-      limit_count = int(u.get("limit_count", 1)) # 💡 Get limit count (default to 1)
-      is_over_limit = online_count > limit_count # 💡 Check if over limit
           
       view.append(type("U",(),{
         "user":u.get("user",""),
@@ -1674,9 +1520,7 @@ def prepare_user_data():
         "expires_date": expires_date_obj, # 💡 New field for comparison
         "days_remaining": calculate_days_remaining(u.get("expires","")), # 💡 New field for display
         "port":u.get("port",""),
-        "online_count": online_count, # 💡 Online Count
-        "limit_count": limit_count, # 💡 Limit Count
-        "is_over_limit": is_over_limit, # 💡 Over Limit status
+        "online_count": get_user_online_count(u.get("port","")), # 💡 NEW: Online Count
         "expiring_soon": is_expiring_soon(u.get("expires","")) 
       }))
     view.sort(key=lambda x:(x.user or "").lower())
@@ -1760,18 +1604,8 @@ def add_user():
   user=(request.form.get("user") or "").strip()
   password=(request.form.get("password") or "").strip()
   expires=(request.form.get("expires") or "").strip()
-  limit_count_str=(request.form.get("limit_count") or "1").strip() # 💡 NEW: Get Limit Count
   port=(request.form.get("port") or "").strip() 
   ip = (request.form.get("ip") or "").strip() or SERVER_IP_FALLBACK
-  
-  try:
-    limit_count = int(limit_count_str)
-    if not (1 <= limit_count <= 10):
-        session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
-        return redirect(url_for('index'))
-  except ValueError:
-    session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
-    return redirect(url_for('index'))
 
   # 💡 NEW FIX: Myanmar Unicode Check (Myanmar Unicode Range U+1000 to U+109F)
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
@@ -1800,7 +1634,7 @@ def add_user():
   users=load_users(); replaced=False
   for u in users:
     if u.get("user","").lower()==user.lower():
-      u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break # 💡 NEW: Update limit_count
+      u["password"]=password; u["expires"]=expires; u["port"]=port; replaced=True; break
   if not replaced:
     # 💡 NEW FIX: Pick a free port if not provided (Important for conntrack tracking)
     if not port:
@@ -1809,7 +1643,7 @@ def add_user():
             session["err"] = "❌ အသုံးပြုရန် Port မရှိတော့ပါ"
             return redirect(url_for('index'))
             
-    users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
+    users.append({"user":user,"password":password,"expires":expires,"port":port})
   
   save_users(users)
   sync_config_passwords()
@@ -1818,8 +1652,7 @@ def add_user():
       "user": user,
       "password": password,
       "expires": expires,
-      "ip": ip,
-      "limit_count": limit_count # 💡 Add limit_count to message
+      "ip": ip 
   }
   
   session["msg"] = json.dumps(msg_dict)
@@ -1863,44 +1696,6 @@ def edit_user_expires():
   sync_config_passwords() 
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Expires ကို **{new_expires}** သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
-  return redirect(url_for('users_table_view'))
-# 💡 END NEW ROUTE
-
-# 💡 NEW ROUTE: Edit Limit Count
-@app.route("/edit_limit", methods=["POST"])
-def edit_user_limit():
-  if not require_login(): return redirect(url_for('login'))
-  user=(request.form.get("user") or "").strip()
-  limit_count_str=(request.form.get("limit_count") or "").strip()
-  
-  if not user or not limit_count_str:
-    session["err"] = "User Name နှင့် Limit Count အသစ် မပါဝင်ပါ"
-    return redirect(url_for('users_table_view'))
-  
-  try:
-    new_limit = int(limit_count_str)
-    if not (1 <= new_limit <= 10):
-        session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
-        return redirect(url_for('users_table_view'))
-  except ValueError:
-    session["err"] = "❌ Limit Count သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
-    return redirect(url_for('users_table_view'))
-
-  users=load_users(); replaced=False
-  for u in users:
-    if u.get("user","").lower()==user.lower():
-      u["limit_count"]=new_limit 
-      replaced=True
-      break
-      
-  if not replaced:
-    session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
-    return redirect(url_for('users_table_view'))
-    
-  save_users(users)
-  # No need to restart zivpn, only web panel needs to see the new limit for display/flagging.
-  
-  session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Limit ကို **{new_limit}** ယောက် သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
 # 💡 END NEW ROUTE
 
@@ -1978,8 +1773,6 @@ def api_users():
     for u in users: 
       u["expiring_soon"]=is_expiring_soon(u.get("expires",""))
       u["online_count"]=get_user_online_count(u.get("port","")) # 💡 API Update
-      u["limit_count"]=int(u.get("limit_count",1)) # 💡 API Update
-      u["is_over_limit"] = u["online_count"] > u["limit_count"] # 💡 API Update
     return jsonify(users)
   
   if request.method=="POST":
@@ -1988,15 +1781,6 @@ def api_users():
     password=(data.get("password") or "").strip()
     expires=(data.get("expires") or "").strip()
     port=str(data.get("port") or "").strip()
-    limit_count_str=(data.get("limit_count") or "1").strip() # 💡 NEW: Get Limit Count
-
-    try:
-      limit_count = int(limit_count_str)
-      if not (1 <= limit_count <= 10):
-          return jsonify({"ok": False, "err": "limit_count must be between 1 and 10"}), 400
-    except ValueError:
-      return jsonify({"ok": False, "err": "invalid limit_count"}), 400
-
     
     # 💡 NEW FIX: Myanmar Unicode Check for API
     myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
@@ -2013,14 +1797,14 @@ def api_users():
     users=load_users(); replaced=False
     for u in users:
       if u.get("user","").lower()==user.lower():
-        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break # 💡 NEW: Update limit_count
+        u["password"]=password; u["expires"]=expires; u["port"]=port; replaced=True; break
     if not replaced:
       # 💡 NEW FIX: Pick a free port if not provided (API)
       if not port:
           port = pick_free_port()
           if not port:
               return jsonify({"ok": False, "err": "No free port available"}), 500
-      users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
+      users.append({"user":user,"password":password,"expires":expires,"port":port})
     save_users(users)
     sync_config_passwords()
     return jsonify({"ok":True})
@@ -2035,113 +1819,25 @@ if __name__ == "__main__":
   app.run(host="0.0.0.0", port=8080)
 PY
 
-# ===== FIX: User Limit Enforcement Script + Cron Job =====
-LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
-echo -e "${Y}🛡️ User Limit Enforcement Script (limit_enforcer.sh) ကို ဖန်တီးနေပါတယ် (User ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန်)...${Z}"
+# ===== Web systemd (unchanged) =====
+cat >/etc/systemd/system/zivpn-web.service <<'EOF'
+[Unit]
+Description=ZIVPN Web Panel
+After=network.target
 
-# This script runs every minute, clears old rules, and blocks ports where conntrack entries > limit.
-cat >"$LIMIT_ENFORCER_SCRIPT" <<'ENFORCER_SHELL'
-#!/bin/bash
-# ZIVPN User Limit Enforcer - Checks connection count via conntrack and enforces limit via iptables.
-set -euo pipefail
+[Service]
+Type=simple
+User=root
+# Load optional web login credentials
+EnvironmentFile=-/etc/zivpn/web.env
+WorkingDirectory=/etc/zivpn 
+ExecStart=/usr/bin/python3 /etc/zivpn/web.py
+Restart=always
+RestartSec=3
 
-USERS_FILE="/etc/zivpn/users.json"
-CHAIN_NAME="ZIVPN_LIMIT_ENFORCER"
-SERVER_IP=$(hostname -I | awk '{print $1}') # Get the server's main IP
-
-# --- Conntrack-based Online Count Function ---
-# Counts the number of UNIQUE SOURCE IPs connected to the specific dport.
-get_online_count() {
-    local port="$1"
-    local server_ip="$2"
-    
-    # 1. List conntrack entries for the specific dport
-    # 2. Filter for the client's source IP (the first 'src=' in the line)
-    # 3. Exclude the server's own IP (in case of NAT loopback/local traffic)
-    # 4. Sort and count unique IPs
-    
-    conntrack -L -p udp 2>/dev/null | 
-    grep "dport=${port}\b" | 
-    awk '{ 
-        for(i=1; i<=NF; i++) {
-            if ($i ~ /^src=[0-9.]*$/) {
-                split($i, a, "="); 
-                if (a[2] != "'"$server_ip"'") {
-                    print a[2]; 
-                    next;
-                }
-            }
-        }
-    }' |
-    sort -u | 
-    wc -l
-}
-
-# --- IPTables Management ---
-setup_iptables() {
-    # Check if the custom chain exists, if not, create and link it from INPUT
-    if ! iptables -L "$CHAIN_NAME" -n > /dev/null 2>&1; then
-        echo "Setting up $CHAIN_NAME chain..." >&2
-        iptables -N "$CHAIN_NAME"
-        # Link the custom chain from the main INPUT chain (for incoming connections to the VPN port)
-        # Check if the jump rule exists before inserting it
-        if ! iptables -C INPUT -p udp -j "$CHAIN_NAME" > /dev/null 2>&1; then
-            iptables -I INPUT -p udp -j "$CHAIN_NAME"
-        fi
-    fi
-}
-
-clear_iptables_rules() {
-    # Delete all rules from the custom chain
-    iptables -F "$CHAIN_NAME" || true
-}
-
-# --- Main Logic ---
-setup_iptables
-clear_iptables_rules
-
-# Get active users with port and limit (excluding expired users via jq)
-USERS=$(jq -r '.[] | select(.expires == null or (.expires | fromdateiso8601 | now | . < . )) | "\(.user):\(.port):\(.limit_count)"' "$USERS_FILE" 2>/dev/null || echo "")
-
-if [ -z "$USERS" ]; then
-    exit 0
-fi
-
-for USER_DATA in $USERS; do
-    USER=$(echo "$USER_DATA" | cut -d: -f1)
-    PORT=$(echo "$USER_DATA" | cut -d: -f2)
-    LIMIT=$(echo "$USER_DATA" | cut -d: -f3)
-    
-    # Default limit is 1 if not set or invalid
-    if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || [ "$LIMIT" -lt 1 ]; then
-        LIMIT=1
-    fi
-
-    if [ -n "$PORT" ]; then
-        ONLINE_COUNT=$(get_online_count "$PORT" "$SERVER_IP")
-
-        if [ "$ONLINE_COUNT" -gt "$LIMIT" ]; then
-            # Block the port if over limit: Add a DROP rule to the custom chain
-            # This DROP rule in the INPUT chain will immediately block new incoming traffic to this port.
-            echo "Blocking user ${USER} (Port: ${PORT}, Online: ${ONLINE_COUNT}, Limit: ${LIMIT})" >&2
-            iptables -A "$CHAIN_NAME" -p udp --dport "$PORT" -m comment --comment "ZIVPN_LIMIT_BLOCK_${USER}" -j DROP
-        fi
-    fi
-done
-
-exit 0
-ENFORCER_SHELL
-
-chmod +x "$LIMIT_ENFORCER_SCRIPT"
-
-# --- Cron Job Setup ---
-echo -e "${Y}⏱️ User Limit Enforcement Cron Job ကို ထည့်သွင်းနေပါတယ် (တစ်မိနစ်လျှင် တစ်ခါ)...${Z}"
-
-# Remove old cron entry if it exists
-crontab -l 2>/dev/null | grep -v "${LIMIT_ENFORCER_SCRIPT}" | crontab - 2>/dev/null || true
-
-# Add new cron entry
-(crontab -l 2>/dev/null; echo "* * * * * ${LIMIT_ENFORCER_SCRIPT} >/dev/null 2>&1") | crontab -
+[Install]
+WantedBy=multi-user.target
+EOF
 
 # ===== Networking: forwarding + DNAT + MASQ + UFW (unchanged) =====
 echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
@@ -2164,7 +1860,7 @@ ufw reload >/dev/null 2>&1 || true
 
 # ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) =====
 echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
-sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh || true
+sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html || true
 
 # ===== Enable services =====
 systemctl daemon-reload
