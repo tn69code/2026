@@ -173,6 +173,7 @@ WantedBy=multi-user.target
 EOF
 
 # 💡 MODIFIED: users_table.html (Added Max Connections Column and Edit Logic)
+# 💡 FIX: Added 'and u.expires_date' check to prevent template crash if expires date is None
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -190,12 +191,12 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
       </thead>
       <tbody>
           {% for u in users %}
-          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% endif %}">
-            <td data-label="User">{% if u.expires and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
-            <td data-label="Password">{% if u.expires and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
+          <tr class="{% if u.expires and u.expires_date and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% endif %}">
+            <td data-label="User">{% if u.expires and u.expires_date and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
+            <td data-label="Password">{% if u.expires and u.expires_date and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
             <td data-label="Expires">
                 {% if u.expires %}
-                    {% if u.expires_date < today_date %}
+                    {% if u.expires_date and u.expires_date < today_date %}
                         <s>{{u.expires}} (Expired)</s>
                     {% else %}
                         {% if u.expiring_soon %}
@@ -246,7 +247,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 
             <td data-label="Status">
                 {# Flask's is_expiring_soon() and expiration logic determines the status #}
-                {% if u.expires and u.expires_date < today_date %}
+                {% if u.expires and u.expires_date and u.expires_date < today_date %}
                     <span class="pill pill-expired"><i class="icon">🛑</i> Expired</span>
                 
                 {# Expiring Soon (Today or Tomorrow) #}
@@ -1655,6 +1656,9 @@ def index():
 def users_table_view():
     if not require_login(): return redirect(url_for('login'))
     
+    # Check and delete expired users before showing the list
+    check_user_expiration() 
+    
     view, today_str, today_date = prepare_user_data() # 💡 Get today_date object
     
     msg_data = session.pop("msg", None)
@@ -2011,4 +2015,3 @@ echo -e "${C}Web Panel (Add Users) :${Z} ${Y}http://$IP:8080${Z}"
 echo -e "${C}Web Panel (User List) :${Z} ${Y}http://$IP:8080/users${Z}"
 echo -e "${C}Services    :${Z} ${Y}systemctl status|systemctl restart zivpn  •  systemctl status|systemctl restart zivpn-web${Z}"
 echo -e "$LINE"
-
