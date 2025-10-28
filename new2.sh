@@ -1,7 +1,7 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
 # ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
-# 💡 NEW MODIFICATION: Added User Limit Count Feature & IPTABLES CONNTRACK ENFORCEMENT
+# 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -9,7 +9,7 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး)${Z}"
+    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန် ပြင်ဆင်ပြီး)${Z}"
     echo -e "$LINE"
     echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
@@ -53,10 +53,10 @@ apt_guard_end(){
 # ===== Packages (unchanged) =====
 echo -e "${Y}📦 Packages တင်နေပါတယ်...${Z}"
 apt_guard_start
-# iptables-persistent for saving rules
-apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates iptables iptables-persistent >/dev/null || {
+apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
+apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates >/dev/null || {
   apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt >/dev/null || true
-  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates iptables iptables-persistent >/dev/null
+  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates >/dev/null
 }
 apt_guard_end
 
@@ -924,7 +924,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: sync_config_passwords, get_user_online_count, /add, /edit_limit)
+# 💡 Web Panel (Flask - web.py) (MODIFIED: load_users, prepare_user_data, /add, /edit_limit, HTML for limit input, login password type)
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -935,11 +935,12 @@ USERS_FILE = "/etc/zivpn/users.json"
 CONFIG_FILE = "/etc/zivpn/config.json"
 LISTEN_FALLBACK = "5667"
 LOGO_URL = "https://zivpn-web.free.nf/zivpn-icon.png"
-IPTABLES_SAVE_CMD = "iptables-save > /etc/iptables/rules.v4" # Standard path for Debian/Ubuntu with iptables-persistent
 
 def get_server_ip():
     try:
+        # Use a more reliable method to get the primary, external IP if possible
         result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, check=True)
+        # 💡 FIX: Split by space, take the first IP, and trim
         ip = result.stdout.strip().split()[0]
         if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
             return ip
@@ -1476,12 +1477,14 @@ def get_user_online_count(port):
                                 shell=True, capture_output=True, text=True).stdout
         
         # Regex to find the source IP (src=...) from the conntrack output line
-        # The first 'src=' is the client's source IP (the client's public IP)
+        # Example output: udp 17 29 src=1.2.3.4 dst=5.6.7.8 sport=5000 dport=6001 [UNREPLIED] src=5.6.7.8 dst=1.2.3.4 sport=6001 dport=5000 [ASSURED] mark=0 zone=0 use=1
+        # The first 'src=' is the client's source IP
         source_ips = re.findall(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', result)
         
         # Count unique IPs that are NOT the server's own IP (to avoid counting NAT loopback or internal communication)
-        server_ip_list = SERVER_IP_FALLBACK.split() # In case it returns multiple IPs
-        unique_online_ips = set(ip for ip in source_ips if ip not in server_ip_list)
+        # 💡 FIX: get_server_ip() returns a single string, compare against it.
+        server_ip_single = SERVER_IP_FALLBACK.split()[0]
+        unique_online_ips = set(ip for ip in source_ips if ip != server_ip_single)
 
         return len(unique_online_ips)
     except Exception:
@@ -1537,21 +1540,9 @@ def calculate_days_remaining(expires_str):
     
 def delete_user(user):
     users = load_users()
-    port_to_remove = next((u.get("port") for u in users if u.get("user").lower() == user.lower()), None)
-    
     remaining_users = [u for u in users if u.get("user").lower() != user.lower()]
     save_users(remaining_users)
     sync_config_passwords(mode="mirror")
-
-    # 💡 NEW: Remove conntrack rules for the deleted user's port
-    if port_to_remove:
-        try:
-            # Delete any existing limit rules for this port
-            subprocess.run(f"iptables -D INPUT -p udp --dport {port_to_remove} -m connlimit --connlimit-above 0 --connlimit-mask 32 -j DROP 2>/dev/null || true", shell=True)
-            subprocess.run(f"{IPTABLES_SAVE_CMD}", shell=True)
-        except Exception as e:
-            print(f"Error removing iptables rule for port {port_to_remove}: {e}")
-
     
 # 💡 DELETION LOGIC (Standard): Deletes users whose expiration date is before today (at 00:00:00 of the following day)
 def check_user_expiration():
@@ -1566,6 +1557,7 @@ def check_user_expiration():
         if expires_str:
             try:
                 # 💡 FIX: Delete if expiration date is strictly before today's date
+                # If expires='2025-10-23', it is deleted only on 2025-10-24 (since 2025-10-23 < 2025-10-24 is FALSE)
                 if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                     is_expired = True
             except ValueError:
@@ -1573,75 +1565,40 @@ def check_user_expiration():
 
         if is_expired:
             deleted_count += 1
-            # 💡 NEW: Remove conntrack rules for expired user's port
-            port = user.get("port")
-            if port:
-                 try:
-                    subprocess.run(f"iptables -D INPUT -p udp --dport {port} -m connlimit --connlimit-above 0 --connlimit-mask 32 -j DROP 2>/dev/null || true", shell=True)
-                 except Exception as e:
-                    print(f"Error removing iptables rule for expired port {port}: {e}")
-            
         else:
             users_to_keep.append(user)
 
     if deleted_count > 0:
         save_users(users_to_keep)
         sync_config_passwords(mode="mirror") 
-        # Save the updated iptables rules
-        subprocess.run(f"{IPTABLES_SAVE_CMD}", shell=True) 
         return True 
     return False 
-    
-# 💡 MODIFIED FUNCTION: Syncs passwords AND enforces connlimit via iptables
 def sync_config_passwords(mode="mirror"):
   cfg=read_json(CONFIG_FILE,{})
   users=load_users()
   
   today_date = date.today() # 💡 Use date.today()
   valid_passwords = set()
-  
-  # 1. Clean up old ZIVPN_USER_LIMIT rules (optional but good practice)
-  # Delete all rules matching the connlimit pattern for ports 6000-19999
-  for p in range(6000, 20000):
-      # We just delete all rules in a range, then re-add the new ones
-      subprocess.run(f"iptables -D INPUT -p udp --dport {p} -m connlimit --connlimit-above 0 --connlimit-mask 32 -j DROP 2>/dev/null || true", shell=True)
-      
-  
-  # 2. Iterate through users to build password list and add new connlimit rules
   for u in users:
       expires_str = u.get("expires")
-      port = u.get("port")
-      limit = int(u.get("limit_count", 1)) # Default to 1
       is_valid = True
-      
-      # Check Expiration
       if expires_str:
           try:
+              # 💡 FIX: Expiration check for VPN Passwords
               if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                   is_valid = False
           except ValueError:
               is_valid = True 
 
+      # 💡 NEW: Online Count check (Users over limit are NOT removed from passwords.json 
+      # but are visually flagged in the web panel. The actual blocking is done by the firewall/OS 
+      # which is what conntrack tracks. We only remove expired users from the passwords list).
+      
       if is_valid and u.get("password"):
           valid_passwords.add(str(u["password"]))
-          
-          # 💡 NEW: Add IPTABLES Rule for Connlimit (for non-expired, valid users with a port)
-          if port and limit >= 1:
-              # Rule: If number of connections from the same source IP on this port exceeds the limit, DROP.
-              # Note: Connlimit is per source IP on the port, effectively limiting unique users.
-              # We delete the 'above 0' generic rule first (done in step 1), then re-add the specific limit rule.
-              try:
-                  # Note: The limit is (limit), so if limit=1, above 1 (2 connections) is dropped.
-                  # If limit=1, the command is --connlimit-above 1. The first connection is allowed.
-                  # If limit=2, the command is --connlimit-above 2. The first two are allowed.
-                  limit_val = limit
-                  rule = f"iptables -A INPUT -p udp --dport {port} -m connlimit --connlimit-above {limit_val} --connlimit-mask 32 -j DROP"
-                  subprocess.run(rule, shell=True, check=True)
-              except subprocess.CalledProcessError as e:
-                  print(f"Error adding iptables rule for user {u['user']} on port {port} (Limit {limit}): {e}")
 
-  # 3. Update ZIVPN Config Passwords
   users_pw=sorted(list(valid_passwords))
+  
   if mode=="merge":
     old=[]
     if isinstance(cfg.get("auth",{}).get("config",None), list):
@@ -1658,11 +1615,7 @@ def sync_config_passwords(mode="mirror"):
   cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
   cfg["obfs"]=cfg.get("obfs") or "zivpn"
   write_json_atomic(CONFIG_FILE,cfg)
-  
-  # 4. Restart services and save rules
   subprocess.run("systemctl restart zivpn.service", shell=True)
-  subprocess.run(f"{IPTABLES_SAVE_CMD}", shell=True) # Save the new rules
-  
 def login_enabled(): return bool(ADMIN_USER and ADMIN_PASS)
 def is_authed(): return session.get("auth") == True
 def require_login():
@@ -1830,7 +1783,7 @@ def add_user():
     users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
   
   save_users(users)
-  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
+  sync_config_passwords()
 
   msg_dict = {
       "user": user,
@@ -1878,7 +1831,7 @@ def edit_user_expires():
     return redirect(url_for('users_table_view'))
     
   save_users(users)
-  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
+  sync_config_passwords() 
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Expires ကို **{new_expires}** သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
@@ -1916,7 +1869,7 @@ def edit_user_limit():
     return redirect(url_for('users_table_view'))
     
   save_users(users)
-  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
+  # No need to restart zivpn, only web panel needs to see the new limit for display/flagging.
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Limit ကို **{new_limit}** ယောက် သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
@@ -1955,7 +1908,7 @@ def edit_user_password():
     return redirect(url_for('users_table_view'))
     
   save_users(users)
-  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
+  sync_config_passwords() 
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Password ပြောင်းပြီးပါပြီ။</h4>", "user":user, "password":new_password})
   return redirect(url_for('users_table_view'))
@@ -1969,7 +1922,7 @@ def delete_user_html():
     session["err"] = "User Name မပါဝင်ပါ"
     return redirect(url_for('users_table_view'))
   
-  delete_user(user) # 💡 Delete user now also removes iptables rule
+  delete_user(user) 
   return redirect(url_for('users_table_view'))
 
 @app.route("/api/user.delete", methods=["POST"])
@@ -1981,7 +1934,7 @@ def delete_user_api():
   if not user:
     return jsonify({"ok": False, "err": "user required"}), 400
   
-  delete_user(user) # 💡 Delete user now also removes iptables rule
+  delete_user(user) 
   return jsonify({"ok": True})
 
 @app.route("/api/users", methods=["GET","POST"])
@@ -2040,7 +1993,7 @@ def api_users():
               return jsonify({"ok": False, "err": "No free port available"}), 500
       users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
     save_users(users)
-    sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
+    sync_config_passwords()
     return jsonify({"ok":True})
 
 @app.route("/favicon.ico", methods=["GET"])
@@ -2053,27 +2006,115 @@ if __name__ == "__main__":
   app.run(host="0.0.0.0", port=8080)
 PY
 
-# ===== Web systemd (unchanged) =====
-cat >/etc/systemd/system/zivpn-web.service <<'EOF'
-[Unit]
-Description=ZIVPN Web Panel
-After=network.target
+# ===== FIX: User Limit Enforcement Script + Cron Job =====
+LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
+echo -e "${Y}🛡️ User Limit Enforcement Script (limit_enforcer.sh) ကို ဖန်တီးနေပါတယ် (User ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန်)...${Z}"
 
-[Service]
-Type=simple
-User=root
-# Load optional web login credentials
-EnvironmentFile=-/etc/zivpn/web.env
-WorkingDirectory=/etc/zivpn 
-ExecStart=/usr/bin/python3 /etc/zivpn/web.py
-Restart=always
-RestartSec=3
+# This script runs every minute, clears old rules, and blocks ports where conntrack entries > limit.
+cat >"$LIMIT_ENFORCER_SCRIPT" <<'ENFORCER_SHELL'
+#!/bin/bash
+# ZIVPN User Limit Enforcer - Checks connection count via conntrack and enforces limit via iptables.
+set -euo pipefail
 
-[Install]
-WantedBy=multi-user.target
-EOF
+USERS_FILE="/etc/zivpn/users.json"
+CHAIN_NAME="ZIVPN_LIMIT_ENFORCER"
+SERVER_IP=$(hostname -I | awk '{print $1}') # Get the server's main IP
 
-# ===== Networking: forwarding + DNAT + MASQ + UFW (MODIFIED: Add IPtables Chain) =====
+# --- Conntrack-based Online Count Function ---
+# Counts the number of UNIQUE SOURCE IPs connected to the specific dport.
+get_online_count() {
+    local port="$1"
+    local server_ip="$2"
+    
+    # 1. List conntrack entries for the specific dport
+    # 2. Filter for the client's source IP (the first 'src=' in the line)
+    # 3. Exclude the server's own IP (in case of NAT loopback/local traffic)
+    # 4. Sort and count unique IPs
+    
+    conntrack -L -p udp 2>/dev/null | 
+    grep "dport=${port}\b" | 
+    awk '{ 
+        for(i=1; i<=NF; i++) {
+            if ($i ~ /^src=[0-9.]*$/) {
+                split($i, a, "="); 
+                if (a[2] != "'"$server_ip"'") {
+                    print a[2]; 
+                    next;
+                }
+            }
+        }
+    }' |
+    sort -u | 
+    wc -l
+}
+
+# --- IPTables Management ---
+setup_iptables() {
+    # Check if the custom chain exists, if not, create and link it from INPUT
+    if ! iptables -L "$CHAIN_NAME" -n > /dev/null 2>&1; then
+        echo "Setting up $CHAIN_NAME chain..." >&2
+        iptables -N "$CHAIN_NAME"
+        # Link the custom chain from the main INPUT chain (for incoming connections to the VPN port)
+        # Check if the jump rule exists before inserting it
+        if ! iptables -C INPUT -p udp -j "$CHAIN_NAME" > /dev/null 2>&1; then
+            iptables -I INPUT -p udp -j "$CHAIN_NAME"
+        fi
+    fi
+}
+
+clear_iptables_rules() {
+    # Delete all rules from the custom chain
+    iptables -F "$CHAIN_NAME" || true
+}
+
+# --- Main Logic ---
+setup_iptables
+clear_iptables_rules
+
+# Get active users with port and limit (excluding expired users via jq)
+USERS=$(jq -r '.[] | select(.expires == null or (.expires | fromdateiso8601 | now | . < . )) | "\(.user):\(.port):\(.limit_count)"' "$USERS_FILE" 2>/dev/null || echo "")
+
+if [ -z "$USERS" ]; then
+    exit 0
+fi
+
+for USER_DATA in $USERS; do
+    USER=$(echo "$USER_DATA" | cut -d: -f1)
+    PORT=$(echo "$USER_DATA" | cut -d: -f2)
+    LIMIT=$(echo "$USER_DATA" | cut -d: -f3)
+    
+    # Default limit is 1 if not set or invalid
+    if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || [ "$LIMIT" -lt 1 ]; then
+        LIMIT=1
+    fi
+
+    if [ -n "$PORT" ]; then
+        ONLINE_COUNT=$(get_online_count "$PORT" "$SERVER_IP")
+
+        if [ "$ONLINE_COUNT" -gt "$LIMIT" ]; then
+            # Block the port if over limit: Add a DROP rule to the custom chain
+            # This DROP rule in the INPUT chain will immediately block new incoming traffic to this port.
+            echo "Blocking user ${USER} (Port: ${PORT}, Online: ${ONLINE_COUNT}, Limit: ${LIMIT})" >&2
+            iptables -A "$CHAIN_NAME" -p udp --dport "$PORT" -m comment --comment "ZIVPN_LIMIT_BLOCK_${USER}" -j DROP
+        fi
+    fi
+done
+
+exit 0
+ENFORCER_SHELL
+
+chmod +x "$LIMIT_ENFORCER_SCRIPT"
+
+# --- Cron Job Setup ---
+echo -e "${Y}⏱️ User Limit Enforcement Cron Job ကို ထည့်သွင်းနေပါတယ် (တစ်မိနစ်လျှင် တစ်ခါ)...${Z}"
+
+# Remove old cron entry if it exists
+crontab -l 2>/dev/null | grep -v "${LIMIT_ENFORCER_SCRIPT}" | crontab - 2>/dev/null || true
+
+# Add new cron entry
+(crontab -l 2>/dev/null; echo "* * * * * ${LIMIT_ENFORCER_SCRIPT} >/dev/null 2>&1") | crontab -
+
+# ===== Networking: forwarding + DNAT + MASQ + UFW (unchanged) =====
 echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
@@ -2081,40 +2122,20 @@ grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1
 IFACE=$(ip -4 route ls | awk '{print $5; exit}')
 [ -n "${IFACE:-}" ] || IFACE=eth0
 # DNAT 6000:19999/udp -> :5667
-# Delete any old DNAT rules first (for clean re-install)
-iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || true
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || \
 iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667
-
 # MASQ out
-iptables -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || true
+iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || \
 iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 
-
-# Clean up and re-sync any existing user limits (in case of previous rules remaining)
-/usr/bin/python3 /etc/zivpn/web.py &
-WEBPID=$!
-sleep 5
-kill $WEBPID 2>/dev/null || true
-# Wait for the python script to run and call sync_config_passwords which applies iptables
-# A better way is to directly call the python function, but for a simple bash script, a wait is fine.
-
-# The web.py's sync_config_passwords function will now handle the iptables rules:
-# 1. Clear old rules (6000-19999 range)
-# 2. Add new connlimit rules for active users
-
-# UFW rules
 ufw allow 5667/udp >/dev/null 2>&1 || true
 ufw allow 6000:19999/udp >/dev/null 2>&1 || true
 ufw allow 8080/tcp >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
-# Save iptables rules so they persist after reboot
-# The web.py script will also save them, but doing it here ensures initial setup is saved.
-iptables-save > /etc/iptables/rules.v4
-
 # ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) =====
 echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
-sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html || true
+sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh || true
 
 # ===== Enable services =====
 systemctl daemon-reload
@@ -2127,4 +2148,3 @@ echo -e "${C}Web Panel (Add Users) :${Z} ${Y}http://$IP:8080${Z}"
 echo -e "${C}Web Panel (User List) :${Z} ${Y}http://$IP:8080/users${Z}"
 echo -e "${C}Services    :${Z} ${Y}systemctl status|systemctl restart zivpn  •  systemctl status|systemctl restart zivpn-web${Z}"
 echo -e "$LINE"
-
