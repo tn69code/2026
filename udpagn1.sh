@@ -1,591 +1,716 @@
 #!/bin/bash
 
-# Configuration
-CONFIG_DIR="/etc/agnudp"
-WEB_DIR="/var/www/agnudp"
-USERS_FILE="$CONFIG_DIR/users.json"
-CONFIG_FILE="$CONFIG_DIR/config.json"
-SERVICE_NAME="agnudp-web"
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
-WEB_PORT=8080
+# AGN-UDP Web Panel Installer
+# GitHub: https://github.com/khaledagn/AGN-UDP
 
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+PANEL_PORT="8080"
+PANEL_DIR="/opt/agn-udp-panel"
+REPO_URL="https://github.com/khaledagn/AGN-UDP.git"
+SERVICE_NAME="agn-udp-panel"
+
+# Logging function
 log() {
-    echo -e "\n[INFO] $1"
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
 }
 
 error() {
-    echo -e "\n[ERROR] $1" >&2
-    exit 1
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
-# ----------------------------------------------------
-# 1. Environment & Permission Fixes
-# ----------------------------------------------------
-
-fix_permissions() {
-    log "Fixing file permissions and installing core dependencies..."
-    
-    # Force re-install core Python dependencies (if they were missing or corrupted)
-    pip3 install --upgrade flask flask-cors || error "Failed to install Python dependencies."
-
-    # Set correct permissions for config files (CRITICAL for Internal Server Error)
-    sudo chmod 700 "$CONFIG_DIR"
-    sudo chmod 600 "$CONFIG_FILE"
-    sudo chmod 600 "$USERS_FILE"
-    
-    # Set web directory permissions
-    sudo chmod -R 755 "$WEB_DIR"
+warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-# ----------------------------------------------------
-# 2. Create Python Flask Application (app.py) - Cleaned up and Fixed
-# ----------------------------------------------------
-
-create_app_py() {
-    log "Overwriting app.py with fully fixed code (Jinja2 Fix and Load Data Error Handling)..."
-    
-    # Writing the clean Python file with correct indentation and improved error handling
-    sudo cat > "$WEB_DIR/app.py" << 'EOF'
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-from flask_cors import CORS
-import json
-import os
-import subprocess
-import time
-
-# --- Configuration ---
-CONFIG_DIR = "/etc/agnudp"
-USERS_FILE = os.path.join(CONFIG_DIR, "users.json")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-
-# --- Flask App Initialization (JINJA2 FIX) ---
-# Changes Jinja2 delimiters from {{ }} to [[ ]] to avoid conflict with Vue.js
-class CustomFlask(Flask):
-    jinja_options = Flask.jinja_options.copy()
-    jinja_options.update(dict(
-        variable_start_string='[[',
-        variable_end_string=']]',
-    ))
-
-app = CustomFlask(__name__, template_folder='templates')
-CORS(app)
-app.secret_key = os.urandom(24) 
-
-# Load configuration and user data (Enhanced CRITICAL FUNCTION for 500 Error)
-def load_data():
-    config = {}
-    users = []
-    
-    # 1. Load Config (Default if file not found or invalid)
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error loading config: {e}. Using defaults.")
-        config = {"admin_username": "admin", "admin_password": "admin123"}
-        
-    # 2. Load Users (Default if file not found or invalid)
-    try:
-        with open(USERS_FILE, 'r') as f:
-            users = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error loading users: {e}. Using safe fallback list.")
-        users = [{"id": 1, "username": "user1", "password": "password123", "data_limit": 10240, "used_data": 0, "active": True}]
-
-    return config, users
-
-def save_users(users):
-    try:
-        with open(USERS_FILE, 'w') as f:
-            json.dump(users, f, indent=4)
-        return True
-    except Exception as e:
-        print(f"Error saving user data: {e}")
-        return False
-
-# --- Authentication ---
-def check_auth():
-    return session.get('logged_in')
-
-@app.route('/')
-def index():
-    # Only render template, actual data load happens via API call after login
-    return render_template('index.html')
-
-@app.route('/api/login', methods=['POST'])
-def login():
-    data = request.json
-    config, _ = load_data()
-    if config and data['username'] == config['admin_username'] and data['password'] == config['admin_password']:
-        session['logged_in'] = True
-        return jsonify(success=True)
-    return jsonify(success=False), 401
-
-# --- API Endpoints (The rest of the code remains the same but with clean indentation) ---
-@app.route('/api/dashboard')
-def dashboard():
-    if not check_auth():
-        return jsonify(error="Unauthorized"), 401
-    
-    _, users = load_data()
-    total_users = len(users)
-    active_users = sum(1 for u in users if u['active'])
-    
-    try:
-        status_output = subprocess.check_output(['systemctl', 'is-active', 'agnudp'], universal_newlines=True).strip()
-        service_status = 'active' if status_output == 'active' else 'inactive'
-    except Exception:
-        service_status = 'unknown'
-
-    return jsonify({
-        'total_users': total_users,
-        'active_users': active_users,
-        'service_status': service_status
-    })
-
-@app.route('/api/users')
-def get_users():
-    if not check_auth():
-        return jsonify(error="Unauthorized"), 401
-    
-    _, users = load_data()
-    return jsonify(users)
-
-@app.route('/api/users/add', methods=['POST'])
-def add_user():
-    if not check_auth():
-        return jsonify(error="Unauthorized"), 401
-    
-    data = request.json
-    _, users = load_data()
-
-    new_id = max(u['id'] for u in users) + 1 if users else 1
-    new_user = {
-        'id': new_id,
-        'username': data['username'],
-        'password': data['password'],
-        'data_limit': int(data.get('data_limit', 10240)),
-        'used_data': 0,
-        'active': True
-    }
-    users.append(new_user)
-    if save_users(users):
-        return jsonify(success=True)
-    return jsonify(success=False, error="Failed to save data"), 500
-
-@app.route('/api/users/<int:user_id>/toggle', methods=['POST'])
-def toggle_user(user_id):
-    if not check_auth():
-        return jsonify(error="Unauthorized"), 401
-    
-    _, users = load_data()
-    user = next((u for u in users if u['id'] == user_id), None)
-    if user:
-        user['active'] = not user['active']
-        if save_users(users):
-            return jsonify(success=True)
-    return jsonify(success=False, error="User not found or save failed"), 404
-
-@app.route('/api/users/<int:user_id>/delete', methods=['DELETE'])
-def delete_user(user_id):
-    if not check_auth():
-        return jsonify(error="Unauthorized"), 401
-    
-    _, users = load_data()
-    initial_count = len(users)
-    users[:] = [u for u in users if u['id'] != user_id]
-    
-    if len(users) < initial_count:
-        if save_users(users):
-            return jsonify(success=True)
-        return jsonify(success=False, error="Failed to save data"), 500
-        
-    return jsonify(success=False, error="User not found"), 404
-
-@app.route('/api/service/restart', methods=['POST'])
-def restart_service():
-    if not check_auth():
-        return jsonify(error="Unauthorized"), 401
-    
-    try:
-        subprocess.run(['systemctl', 'restart', 'agnudp'], check=True, timeout=10)
-        return jsonify(success=True, message="Service restart initiated"), 202
-    except subprocess.CalledProcessError as e:
-        return jsonify(success=False, error=f"Command failed: {e.output}"), 500
-    except subprocess.TimeoutExpired:
-        return jsonify(success=False, error="Service restart command timed out"), 500
-    except Exception as e:
-        return jsonify(success=False, error=str(e)), 500
-
-
-# --- Run App ---
-if __name__ == '__main__':
-    WEB_PORT = 8080 
-    app.run(host='0.0.0.0', port=WEB_PORT, debug=False)
-EOF
+info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
-# ----------------------------------------------------
-# 3. Create HTML Template (index.html)
-# ----------------------------------------------------
+# Check if running as root
+check_root() {
+    if [[ $EUID -eq 0 ]]; then
+        error "This script should not be run as root"
+        exit 1
+    fi
+}
 
-create_index_html() {
-    log "Overwriting index.html to ensure Jinja2/Vue.js delimiters are correct..."
+# Install dependencies
+install_dependencies() {
+    log "Installing dependencies..."
     
-    # This HTML file is correct and uses [[ ]] for Jinja2 and {{ }} for Vue.js
-    sudo cat > "$WEB_DIR/templates/index.html" << 'EOF'
+    # Detect OS
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        case $ID in
+            ubuntu|debian)
+                sudo apt update
+                sudo apt install -y nginx curl git python3 python3-pip
+                ;;
+            centos|rhel|fedora)
+                sudo yum install -y nginx curl git python3 python3-pip || \
+                sudo dnf install -y nginx curl git python3 python3-pip
+                ;;
+            *)
+                error "Unsupported OS: $ID"
+                exit 1
+                ;;
+        esac
+    else
+        error "Cannot detect OS"
+        exit 1
+    fi
+}
+
+# Clone repository
+clone_repo() {
+    log "Cloning AGN-UDP repository..."
+    
+    if [[ -d "$PANEL_DIR" ]]; then
+        warning "Panel directory already exists. Backing up..."
+        sudo mv "$PANEL_DIR" "${PANEL_DIR}.backup.$(date +%Y%m%d%H%M%S)"
+    fi
+    
+    sudo mkdir -p "$PANEL_DIR"
+    sudo chown $USER:$USER "$PANEL_DIR"
+    
+    git clone "$REPO_URL" "$PANEL_DIR"
+    
+    if [[ ! -d "$PANEL_DIR" ]]; then
+        error "Failed to clone repository"
+        exit 1
+    fi
+}
+
+# Create web panel script
+create_panel_script() {
+    log "Creating web panel script..."
+    
+    cat > "$PANEL_DIR/web_panel.sh" << 'EOF'
+#!/bin/bash
+
+# AGN-UDP Web Panel
+# Control panel for AGN-UDP
+
+set -e
+
+PANEL_PORT="8080"
+PANEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_FILE="$PANEL_DIR/panel.log"
+CONFIG_FILE="$PANEL_DIR/panel.conf"
+
+# Load configuration
+if [[ -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+fi
+
+# Default values
+: ${PANEL_PORT:="8080"}
+: ${PANEL_HOST:="0.0.0.0"}
+
+# Logging
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+# HTML template functions
+html_header() {
+    cat << HTML
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AGN-UDP Manager</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.47/dist/vue.global.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <title>AGN-UDP Control Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            background: white; 
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header { 
+            background: linear-gradient(135deg, #2c3e50, #3498db);
+            color: white; 
+            padding: 30px; 
+            text-align: center;
+        }
+        .header h1 { 
+            font-size: 2.5em; 
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .nav { 
+            background: #34495e; 
+            padding: 15px; 
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .nav button, .nav a {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        .nav button:hover, .nav a:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .content { 
+            padding: 30px; 
+            min-height: 400px;
+        }
+        .card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 5px solid #3498db;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status-running { background: #2ecc71; color: white; }
+        .status-stopped { background: #e74c3c; color: white; }
+        .status-unknown { background: #95a5a6; color: white; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: bold; color: #2c3e50; }
+        .form-group input, .form-group select { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #bdc3c7; 
+            border-radius: 8px; 
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        .form-group input:focus, .form-group select:focus {
+            border-color: #3498db;
+            outline: none;
+        }
+        .btn { 
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white; 
+            border: none; 
+            padding: 15px 30px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        .btn:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(52, 152, 219, 0.3);
+        }
+        .btn-danger { background: linear-gradient(135deg, #e74c3c, #c0392b); }
+        .btn-success { background: linear-gradient(135deg, #2ecc71, #27ae60); }
+        .btn-warning { background: linear-gradient(135deg, #f39c12, #d35400); }
+        .log-output {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            background: #ecf0f1;
+            color: #7f8c8d;
+            border-top: 1px solid #bdc3c7;
+        }
+    </style>
 </head>
-<body class="bg-gray-100">
-    <div id="app">
-        <div v-if="!loggedIn" class="min-h-screen flex items-center justify-center">
-            <div class="bg-white p-8 rounded-lg shadow-md w-96">
-                <h2 class="text-2xl font-bold mb-6 text-center text-blue-600">
-                    <i class="fas fa-shield-alt mr-2"></i>AGN-UDP Login
-                </h2>
-                <form @submit.prevent="login">
-                    <div class="mb-4">
-                        <label class="block text-gray-700 text-sm font-bold mb-2">Username</label>
-                        <input v-model="loginData.username" type="text" 
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div class="mb-6">
-                        <label class="block text-gray-700 text-sm font-bold mb-2">Password</label>
-                        <input v-model="loginData.password" type="password" 
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <button type="submit" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-200">
-                        Login
-                    </button>
-                </form>
-            </div>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 AGN-UDP Control Panel</h1>
+            <p>Web-based management interface for AGN-UDP</p>
         </div>
+        <div class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/status">Status</a>
+            <a href="/config">Configuration</a>
+            <a href="/logs">Logs</a>
+            <a href="/update">Update</a>
+        </div>
+        <div class="content">
+HTML
+}
 
-        <div v-else class="min-h-screen">
-            <header class="bg-white shadow-sm">
-                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div class="flex justify-between items-center py-4">
-                        <h1 class="text-2xl font-bold text-gray-900">
-                            <i class="fas fa-shield-alt text-blue-600 mr-2"></i>AGN-UDP Manager
-                        </h1>
-                        <button @click="logout" class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 transition duration-200">
-                            <i class="fas fa-sign-out-alt mr-2"></i>Logout
-                        </button>
-                    </div>
-                </div>
-            </header>
-
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div class="bg-white rounded-lg shadow p-6">
-                        <div class="flex items-center">
-                            <div class="p-3 rounded-full bg-blue-100 text-blue-600">
-                                <i class="fas fa-users text-xl"></i>
-                            </div>
-                            <div class="ml-4">
-                                <h3 class="text-sm font-medium text-gray-500">Total Users</h3>
-                                <p class="text-2xl font-semibold text-gray-900">[[ stats.total_users ]]</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-white rounded-lg shadow p-6">
-                        <div class="flex items-center">
-                            <div class="p-3 rounded-full bg-green-100 text-green-600">
-                                <i class="fas fa-user-check text-xl"></i>
-                            </div>
-                            <div class="ml-4">
-                                <h3 class="text-sm font-medium text-gray-500">Active Users</h3>
-                                <p class="text-2xl font-semibold text-gray-900">[[ stats.active_users ]]</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="bg-white rounded-lg shadow p-6">
-                        <div class="flex items-center">
-                            <div :class="['p-3 rounded-full', serviceStatusClass]">
-                                <i class="fas fa-server text-xl"></i>
-                            </div>
-                            <div class="ml-4">
-                                <h3 class="text-sm font-medium text-gray-500">Service Status</h3>
-                                <p class="text-2xl font-semibold" :class="serviceStatusTextClass">[[ stats.service_status ]]</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-lg shadow p-6 mb-6">
-                    <h2 class="text-lg font-semibold mb-4">Add New User</h2>
-                    <form @submit.prevent="addUser" class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                            <input v-model="newUser.username" type="text" required
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                            <input v-model="newUser.password" type="text" required
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Data Limit (MB)</label>
-                            <input v-model="newUser.data_limit" type="number" required
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div class="flex items-end">
-                            <button type="submit" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-200">
-                                Add User
-                            </button>
-                        </div>
-                    </form>
-                </div>
-
-                <div class="bg-white rounded-lg shadow overflow-hidden">
-                    <div class="px-6 py-4 border-b border-gray-200">
-                        <h2 class="text-lg font-semibold">User Management</h2>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Used Data</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data Limit</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                <tr v-for="user in users" :key="user.id">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.id ]]</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.username ]]</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.used_data ]] MB</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">[[ user.data_limit ]] MB</td>
-                                    <td class="px-6 py-4 whitespace-nowrap">
-                                        <span :class="['px-2 inline-flex text-xs leading-5 font-semibold rounded-full', 
-                                                     user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800']">
-                                            {{ user.active ? 'Active' : 'Inactive' }} 
-                                        </span>
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <button @click="toggleUser(user.id)" 
-                                                :class="['mr-2 px-3 py-1 rounded-md', 
-                                                       user.active ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-green-500 hover:bg-green-600',
-                                                       'text-white transition duration-200']">
-                                            [[ user.active ? 'Deactivate' : 'Activate' ]]
-                                        </button>
-                                        <button @click="deleteUser(user.id)" 
-                                                class="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition duration-200">
-                                            Delete
-                                        </button>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-lg shadow p-6 mt-6">
-                    <h2 class="text-lg font-semibold mb-4">Service Controls</h2>
-                    <div class="flex space-x-4">
-                        <button @click="restartService" 
-                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200">
-                            <i class="fas fa-sync-alt mr-2"></i>Restart Service
-                        </button>
-                    </div>
-                </div>
-            </div>
+html_footer() {
+    cat << HTML
+        </div>
+        <div class="footer">
+            <p>AGN-UDP Web Panel &copy; $(date +%Y) | $(uname -n)</p>
         </div>
     </div>
-
     <script>
-        const { createApp, ref, computed } = Vue;
+        function showAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-' + type;
+            alertDiv.textContent = message;
+            document.querySelector('.content').insertBefore(alertDiv, document.querySelector('.content').firstChild);
+            setTimeout(() => alertDiv.remove(), 5000);
+        }
         
-        createApp({
-            setup() {
-                const loggedIn = ref(false);
-                const loginData = ref({
-                    username: '',
-                    password: ''
-                });
-                
-                const stats = ref({
-                    total_users: 0,
-                    active_users: 0,
-                    service_status: 'unknown'
-                });
-                
-                const users = ref([]);
-                const newUser = ref({
-                    username: '',
-                    password: '',
-                    data_limit: 1000
-                });
-                
-                const serviceStatusClass = computed(() => {
-                    return stats.value.service_status === 'active' 
-                        ? 'bg-green-100 text-green-600' 
-                        : 'bg-red-100 text-red-600';
-                });
-                
-                const serviceStatusTextClass = computed(() => {
-                    return stats.value.service_status === 'active' 
-                        ? 'text-green-600' 
-                        : 'text-red-600';
-                });
-                
-                const checkLogin = () => {
-                    if (localStorage.getItem('agnudp_loggedIn') === 'true') {
-                        loggedIn.value = true;
-                        fetchData();
-                    }
-                };
-                
-                const login = async () => {
-                    try {
-                        const response = await axios.post('/api/login', loginData.value);
-                        if (response.data.success) {
-                            loggedIn.value = true;
-                            localStorage.setItem('agnudp_loggedIn', 'true');
-                            fetchData();
-                        } else {
-                            alert('Invalid credentials');
-                        }
-                    } catch (error) {
-                        console.error('Login error:', error);
-                        alert('Login failed');
-                    }
-                };
-                
-                const logout = () => {
-                    loggedIn.value = false;
-                    localStorage.removeItem('agnudp_loggedIn');
-                };
-                
-                const fetchData = async () => {
-                    try {
-                        const [dashboardRes, usersRes] = await Promise.all([
-                            axios.get('/api/dashboard'),
-                            axios.get('/api/users')
-                        ]);
-                        
-                        stats.value = dashboardRes.data;
-                        users.value = usersRes.data;
-                    } catch (error) {
-                        console.error('Fetch error:', error);
-                    }
-                };
-                
-                const addUser = async () => {
-                    try {
-                        const response = await axios.post('/api/users/add', newUser.value);
-                        if (response.data.success) {
-                            newUser.value = { username: '', password: '', data_limit: 1000 };
-                            fetchData();
-                        } else {
-                            alert('Failed to add user: ' + (response.data.error || 'Unknown error'));
-                        }
-                    } catch (error) {
-                        console.error('Add user error:', error);
-                        alert('Failed to add user');
-                    }
-                };
-                
-                const toggleUser = async (userId) => {
-                    try {
-                        await axios.post(`/api/users/${userId}/toggle`);
-                        fetchData();
-                    } catch (error) {
-                        console.error('Toggle user error:', error);
-                    }
-                };
-                
-                const deleteUser = async (userId) => {
-                    if (confirm('Are you sure you want to delete this user?')) {
-                        try {
-                            await axios.delete(`/api/users/${userId}/delete`);
-                            fetchData();
-                        } catch (error) {
-                            console.error('Delete user error:', error);
-                        }
-                    }
-                };
-                
-                const restartService = async () => {
-                    try {
-                        const response = await axios.post('/api/service/restart');
-                        if (response.data.success || response.status === 202) {
-                            alert('Service restart initiated');
-                            setTimeout(fetchData, 3000);
-                        } else {
-                            alert('Failed to restart service: ' + (response.data.error || 'Unknown error'));
-                        }
-                    } catch (error) {
-                        console.error('Restart error:', error);
-                        alert('Failed to restart service');
-                    }
-                };
-                
-                // Initialize
-                checkLogin();
-                
-                return {
-                    loggedIn,
-                    loginData,
-                    stats,
-                    users,
-                    newUser,
-                    serviceStatusClass,
-                    serviceStatusTextClass,
-                    login,
-                    logout,
-                    addUser,
-                    toggleUser,
-                    deleteUser,
-                    restartService
-                };
-            }
-        }).mount('#app');
+        function executeAction(action) {
+            fetch('/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'action=' + action
+            }).then(r => r.text()).then(data => {
+                showAlert('Action completed: ' + action, 'success');
+                setTimeout(() => location.reload(), 1000);
+            }).catch(err => {
+                showAlert('Error: ' + err, 'danger');
+            });
+        }
     </script>
 </body>
 </html>
 EOF
 }
 
-# ----------------------------------------------------
-# 4. Service Start/Check
-# ----------------------------------------------------
-
-start_service() {
-    log "Performing final service restart..."
+# Generate dashboard HTML
+generate_dashboard() {
+    cat << HTML
+    <div class="card">
+        <h2>📊 Dashboard</h2>
+        <p>Welcome to AGN-UDP Control Panel. Monitor and manage your UDP services.</p>
+    </div>
     
-    # Ensure daemon is reloaded
-    sudo systemctl daemon-reload
-
-    # Stop and start service
-    sudo systemctl stop "$SERVICE_NAME"
-    sudo systemctl start "$SERVICE_NAME" || error "Service failed to start. Check logs with 'journalctl -u $SERVICE_NAME -f'"
-
-    log "Installation/Fix completed successfully! 🎉"
-    log "----------------------------------------------------"
-    log "Web Panel URL: http://185.84.160.65:$WEB_PORT"
-    log "Service Status: active (running) ဖြစ်သင့်ပါတယ်"
-    log "----------------------------------------------------"
-    log "Final Status Check: sudo systemctl status $SERVICE_NAME"
+    <div class="card">
+        <h2>🛠️ Quick Actions</h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px;">
+            <button class="btn btn-success" onclick="executeAction('start')">▶️ Start Service</button>
+            <button class="btn btn-danger" onclick="executeAction('stop')">⏹️ Stop Service</button>
+            <button class="btn btn-warning" onclick="executeAction('restart')">🔄 Restart Service</button>
+            <button class="btn" onclick="executeAction('update')">📥 Update</button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>📈 Service Status</h2>
+        <div id="status-content">
+            <p>Loading status...</p>
+        </div>
+    </div>
+    
+    <script>
+        // Load status on page load
+        fetch('/status-data').then(r => r.text()).then(html => {
+            document.getElementById('status-content').innerHTML = html;
+        });
+    </script>
+HTML
 }
 
-# --- Execute All Steps ---
-fix_permissions
-create_app_py
-create_index_html
-start_service
+# Generate status HTML
+generate_status() {
+    # Check if AGN-UDP is running
+    if pgrep -f "agn-udp" > /dev/null; then
+        STATUS="RUNNING"
+        STATUS_CLASS="status-running"
+    else
+        STATUS="STOPPED"
+        STATUS_CLASS="status-stopped"
+    fi
+    
+    cat << HTML
+    <div class="card">
+        <h2>🔍 Service Status</h2>
+        <p>Current Status: <span class="status-badge $STATUS_CLASS">$STATUS</span></p>
+        <p>Last Checked: $(date)</p>
+    </div>
+    
+    <div class="card">
+        <h2>📊 System Information</h2>
+        <p><strong>Hostname:</strong> $(hostname)</p>
+        <p><strong>Uptime:</strong> $(uptime -p)</p>
+        <p><strong>Load Average:</strong> $(uptime | awk -F'load average:' '{print $2}')</p>
+        <p><strong>Memory Usage:</strong> $(free -h | awk 'NR==2{printf "%.2f/%.2f", \$3,\$2}')</p>
+    </div>
+HTML
+}
+
+# Generate configuration HTML
+generate_config() {
+    cat << HTML
+    <div class="card">
+        <h2>⚙️ Configuration</h2>
+        <form action="/save-config" method="POST">
+            <div class="form-group">
+                <label for="panel_port">Panel Port:</label>
+                <input type="number" id="panel_port" name="panel_port" value="$PANEL_PORT" min="1024" max="65535">
+            </div>
+            <div class="form-group">
+                <label for="panel_host">Panel Host:</label>
+                <input type="text" id="panel_host" name="panel_host" value="$PANEL_HOST" placeholder="0.0.0.0">
+            </div>
+            <button type="submit" class="btn btn-success">💾 Save Configuration</button>
+        </form>
+    </div>
+HTML
+}
+
+# Generate logs HTML
+generate_logs() {
+    cat << HTML
+    <div class="card">
+        <h2>📋 Recent Logs</h2>
+        <div class="log-output">
+$(tail -20 "$LOG_FILE" 2>/dev/null || echo "No logs available")
+        </div>
+        <button class="btn" onclick="location.reload()">🔄 Refresh Logs</button>
+        <button class="btn btn-danger" onclick="executeAction('clear_logs')">🗑️ Clear Logs</button>
+    </div>
+HTML
+}
+
+# Generate update HTML
+generate_update() {
+    cat << HTML
+    <div class="card">
+        <h2>🔄 Update System</h2>
+        <p>Update AGN-UDP to the latest version from GitHub.</p>
+        <button class="btn btn-success" onclick="executeAction('update_repo')">📥 Update Repository</button>
+        <button class="btn btn-warning" onclick="executeAction('reinstall')">🔧 Reinstall</button>
+    </div>
+    
+    <div class="card">
+        <h2>📦 Current Version</h2>
+        <div class="log-output">
+$(cd "$PANEL_DIR" && git log --oneline -5 2>/dev/null || echo "Version information not available")
+        </div>
+    </div>
+HTML
+}
+
+# Handle actions
+handle_action() {
+    local action="$1"
+    log "Executing action: $action"
+    
+    case "$action" in
+        start)
+            # Start AGN-UDP service
+            cd "$PANEL_DIR"
+            nohup python3 server.py > server.log 2>&1 &
+            echo "Service started"
+            ;;
+        stop)
+            # Stop AGN-UDP service
+            pkill -f "agn-udp\|server.py"
+            echo "Service stopped"
+            ;;
+        restart)
+            pkill -f "agn-udp\|server.py"
+            sleep 2
+            cd "$PANEL_DIR"
+            nohup python3 server.py > server.log 2>&1 &
+            echo "Service restarted"
+            ;;
+        update)
+            cd "$PANEL_DIR" && git pull
+            echo "Repository updated"
+            ;;
+        update_repo)
+            cd "$PANEL_DIR" && git pull --force
+            echo "Repository updated forcefully"
+            ;;
+        reinstall)
+            cd "$PANEL_DIR" && git reset --hard && git pull --force
+            echo "System reinstalled"
+            ;;
+        clear_logs)
+            > "$LOG_FILE"
+            echo "Logs cleared"
+            ;;
+        *)
+            echo "Unknown action: $action"
+            ;;
+    esac
+}
+
+# Main web server function
+start_web_server() {
+    log "Starting web panel on port $PANEL_PORT..."
+    
+    # Create a simple HTTP server using netcat
+    while true; do
+        {
+            read -r request
+            local method=$(echo "$request" | awk '{print $1}')
+            local path=$(echo "$request" | awk '{print $2}')
+            
+            # Read headers
+            while read -r header; do
+                [[ "$header" =~ $'\r' ]] && break
+            done
+            
+            log "Request: $method $path"
+            
+            # Route requests
+            case "$path" in
+                "/")
+                    html_header
+                    generate_dashboard
+                    html_footer
+                    ;;
+                "/status")
+                    html_header
+                    generate_status
+                    html_footer
+                    ;;
+                "/status-data")
+                    generate_status
+                    ;;
+                "/config")
+                    html_header
+                    generate_config
+                    html_footer
+                    ;;
+                "/logs")
+                    html_header
+                    generate_logs
+                    html_footer
+                    ;;
+                "/update")
+                    html_header
+                    generate_update
+                    html_footer
+                    ;;
+                "/action")
+                    if [[ "$method" == "POST" ]]; then
+                        read -n $CONTENT_LENGTH post_data
+                        local action=$(echo "$post_data" | sed 's/action=//')
+                        html_header
+                        echo "<div class='alert alert-success'>$(handle_action "$action")</div>"
+                        generate_dashboard
+                        html_footer
+                    fi
+                    ;;
+                "/save-config")
+                    if [[ "$method" == "POST" ]]; then
+                        read -n $CONTENT_LENGTH post_data
+                        # Save configuration logic here
+                        html_header
+                        echo "<div class='alert alert-success'>Configuration saved successfully!</div>"
+                        generate_config
+                        html_footer
+                    fi
+                    ;;
+                *)
+                    html_header
+                    echo "<div class='alert alert-danger'>404 - Page not found</div>"
+                    html_footer
+                    ;;
+            esac
+        } | nc -l -p "$PANEL_PORT" -q 1
+    done
+}
+
+# Main execution
+main() {
+    # Make script executable
+    chmod +x "$PANEL_DIR/web_panel.sh"
+    
+    # Start the web panel
+    cd "$PANEL_DIR"
+    log "AGN-UDP Web Panel started on port $PANEL_PORT"
+    log "Access the panel at: http://$(hostname -I | awk '{print $1}'):$PANEL_PORT"
+    
+    # Start web server
+    start_web_server
+}
+
+# Run main function if script is executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main
+fi
+EOF
+
+    chmod +x "$PANEL_DIR/web_panel.sh"
+}
+
+# Create systemd service
+create_service() {
+    log "Creating systemd service..."
+    
+    sudo tee "/etc/systemd/system/${SERVICE_NAME}.service" > /dev/null << EOF
+[Unit]
+Description=AGN-UDP Web Panel
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$PANEL_DIR
+ExecStart=$PANEL_DIR/web_panel.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$SERVICE_NAME"
+}
+
+# Configure nginx (optional)
+configure_nginx() {
+    log "Configuring nginx..."
+    
+    sudo tee "/etc/nginx/sites-available/agn-udp-panel" > /dev/null << EOF
+server {
+    listen 80;
+    server_name _;
+    
+    location / {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+    sudo ln -sf "/etc/nginx/sites-available/agn-udp-panel" "/etc/nginx/sites-enabled/"
+    sudo nginx -t && sudo systemctl restart nginx
+}
+
+# Main installation function
+main_install() {
+    log "Starting AGN-UDP Web Panel installation..."
+    
+    check_root
+    install_dependencies
+    clone_repo
+    create_panel_script
+    create_service
+    
+    read -p "Configure nginx for web access? (y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        configure_nginx
+    fi
+    
+    log "Installation completed successfully!"
+    info "Panel directory: $PANEL_DIR"
+    info "Service name: $SERVICE_NAME"
+    info "Web interface: http://$(curl -s ifconfig.me):$PANEL_PORT"
+    
+    read -p "Start the web panel now? (y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        sudo systemctl start "$SERVICE_NAME"
+        log "Web panel started!"
+        sudo systemctl status "$SERVICE_NAME"
+    fi
+}
+
+# Show usage
+usage() {
+    echo "AGN-UDP Web Panel Installer"
+    echo ""
+    echo "Usage: $0 [option]"
+    echo ""
+    echo "Options:"
+    echo "  install    Install the web panel"
+    echo "  start      Start the web panel"
+    echo "  stop       Stop the web panel"
+    echo "  restart    Restart the web panel"
+    echo "  status     Check panel status"
+    echo "  uninstall  Remove the web panel"
+    echo "  help       Show this help message"
+}
+
+# Handle commands
+case "${1:-}" in
+    "install")
+        main_install
+        ;;
+    "start")
+        sudo systemctl start "$SERVICE_NAME"
+        log "Web panel started"
+        ;;
+    "stop")
+        sudo systemctl stop "$SERVICE_NAME"
+        log "Web panel stopped"
+        ;;
+    "restart")
+        sudo systemctl restart "$SERVICE_NAME"
+        log "Web panel restarted"
+        ;;
+    "status")
+        sudo systemctl status "$SERVICE_NAME"
+        ;;
+    "uninstall")
+        log "Uninstalling AGN-UDP Web Panel..."
+        sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+        sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+        sudo rm -rf "$PANEL_DIR"
+        sudo systemctl daemon-reload
+        log "Uninstallation completed"
+        ;;
+    "help"|"")
+        usage
+        ;;
+    *)
+        error "Unknown command: $1"
+        usage
+        exit 1
+        ;;
+esac
