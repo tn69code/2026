@@ -2,6 +2,7 @@
 # ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
 # ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
 # 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX
+# 💡 MODIFICATION REQUEST: Shorten 'Edit Expires' and 'Edit Limit' buttons & make their Modals the same width as 'Password Edit' modal.
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -223,7 +224,8 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                 {% else %}
                     <span class="muted">—</span>
                 {% endif %}
-                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> {# 💡 EXPIRES EDIT BUTTON #}
+                {# 💡 MODIFIED BUTTON TEXT #}
+                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> 
 
             </td>
             
@@ -251,7 +253,8 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                 {% else %}
                     <span class="pill pill-limit-default">N/A (Limit: 1)</span>
                 {% endif %}
-                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button> {# 💡 LIMIT EDIT BUTTON #}
+                {# 💡 MODIFIED BUTTON TEXT #}
+                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button>
             </td>
 
             <td data-label="Status">
@@ -322,9 +325,9 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   </div>
 </div>
 
-{# 💡 NEW: EXPIRES EDIT MODAL #}
+{# 💡 NEW: EXPIRES EDIT MODAL (MODIFIED: max-width removed to inherit from CSS) #}
 <div id="expiresModal" class="modal">
-  <div class="modal-content" style="max-width: 350px;"> {# Slightly wider for date input #}
+  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
     <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
     <h2 class="section-title"><i class="icon">⏰</i> Change Expiry Date</h2>
     <form method="post" action="/edit_expires"> {# NEW ROUTE #}
@@ -351,9 +354,9 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 </div>
 {# 💡 END NEW EXPIRES EDIT MODAL #}
 
-{# 💡 NEW: LIMIT EDIT MODAL #}
+{# 💡 NEW: LIMIT EDIT MODAL (MODIFIED: max-width removed to inherit from CSS) #}
 <div id="limitModal" class="modal">
-  <div class="modal-content" style="max-width: 350px;">
+  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
     <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
     <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
     <form method="post" action="/edit_limit"> {# NEW ROUTE #}
@@ -389,7 +392,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   padding: 25px; 
   border: none; /* Remove default border */
   width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ */
+  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
   border-radius: 12px;
   position: relative;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2); /* Stronger, modern shadow */
@@ -479,28 +482,30 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
 .btn-delete:hover { background-color: #c82333; }
 
-/* 💡 NEW BUTTON: Expires Edit Button */
+/* 💡 MODIFIED BUTTON: Expires Edit Button */
 .btn-edit-expires { 
     background-color: var(--primary); 
     color: white; 
     border: none; 
-    padding: 3px 6px; 
+    padding: 3px 6px; /* Reduced padding */
     border-radius: 4px; 
     cursor: pointer; 
     font-size: 0.75em; 
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
-    display: inline-block; /* Fix display on desktop */
+    display: inline-block; 
+    width: 50px; /* 💡 Set fixed width */
+    text-align: center;
 }
 .btn-edit-expires:hover { background-color: var(--primary-dark); }
 
-/* 💡 NEW BUTTON: Limit Edit Button */
+/* 💡 MODIFIED BUTTON: Limit Edit Button */
 .btn-edit-limit { 
     background-color: var(--secondary); 
     color: white; 
     border: none; 
-    padding: 3px 6px; 
+    padding: 3px 6px; /* Reduced padding */
     border-radius: 4px; 
     cursor: pointer; 
     font-size: 0.75em; 
@@ -508,6 +513,8 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     margin-left: 5px;
     margin-top: 5px;
     display: inline-block;
+    width: 50px; /* 💡 Set fixed width */
+    text-align: center;
 }
 .btn-edit-limit:hover { background-color: #5a6268; }
 
@@ -548,8 +555,9 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
         max-width: 280px; /* 💡 Mobile အတွက် ပိုသေးအောင် လျှော့ချသည်။ */
     }
     .days-remaining { display: block; text-align: right; }
-    .btn-edit-expires { display: block; margin-left: auto; width: 100%; box-sizing: border-box; }
-    .btn-edit-limit { display: block; margin-left: auto; margin-top: 5px; width: 100%; box-sizing: border-box; }
+    /* 💡 MODIFIED BUTTONS FOR MOBILE */
+    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
 
 
 }
@@ -734,6 +742,9 @@ tr:hover { background-color: #e9ecef; }
     .delform { display: block; text-align: right; }
     .btn-delete { width: 80px; padding: 6px 8px; font-size: 0.8em; margin-top: 5px;}
     .days-remaining { display: block !important; }
+    /* 💡 MODIFIED BUTTONS FOR MOBILE */
+    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
 }
 /* Desktop Navigation Hidden */
 .main-nav { display: none; } 
@@ -787,6 +798,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
 
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s;}
 .btn-delete:hover { background-color: #c82333; }
+/* 💡 MODIFIED BUTTON: Expires Edit Button - Matches Table HTML change */
 .btn-edit-expires { 
     background-color: var(--primary); 
     color: white; 
@@ -798,6 +810,23 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
+    width: 50px; 
+    text-align: center;
+}
+/* 💡 MODIFIED BUTTON: Limit Edit Button - Matches Table HTML change */
+.btn-edit-limit { 
+    background-color: var(--secondary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    width: 50px; 
+    text-align: center;
 }
 
 /* 💡 New/Updated styles for Edit Modal (Must be included here for the HTML wrapper) */
@@ -816,7 +845,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
   padding: 25px; 
   border: none; 
   width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ */
+  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
   border-radius: 12px;
   position: relative;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2); 
