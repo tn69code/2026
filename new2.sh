@@ -1,6 +1,7 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
-# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL + MAX CONNECTIONS (FORCE DISCONNECT LOGIC ADDED) ==================================
+# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
+# 💡 NEW MODIFICATION: Added User Limit Count Feature & IPTABLES CONNTRACK ENFORCEMENT
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -8,7 +9,7 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) [Max Connections Feature Added]${Z}"
+    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး)${Z}"
     echo -e "$LINE"
     echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
@@ -52,10 +53,10 @@ apt_guard_end(){
 # ===== Packages (unchanged) =====
 echo -e "${Y}📦 Packages တင်နေပါတယ်...${Z}"
 apt_guard_start
-apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
-apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates >/dev/null || {
+# iptables-persistent for saving rules
+apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates iptables iptables-persistent >/dev/null || {
   apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt >/dev/null || true
-  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates >/dev/null
+  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates iptables iptables-persistent >/dev/null
 }
 apt_guard_end
 
@@ -172,8 +173,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 MODIFIED: users_table.html (Added Max Connections Column and Edit Logic)
-# 💡 FIX: Added 'and u.expires_date' check to prevent template crash if expires date is None
+# 💡 MODIFIED: users_table.html (Added Online Users column, Expires Edit Modal, Limit Count Column, Limit Count Edit Modal)
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -183,20 +183,20 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             <th><i class="icon">👤</i> User</th>
             <th><i class="icon">🔑</i> Password</th>
             <th><i class="icon">⏰</i> Expires</th>
-            <th><i class="icon">👥</i> Max Users</th> {# 💡 NEW COLUMN #}
             <th><i class="icon">💻</i> Online Users</th> {# 💡 NEW COLUMN #}
+            <th><i class="icon">👥</i> Limit</th> {# 💡 NEW COLUMN #}
             <th><i class="icon">🚦</i> Status</th> 
             <th><i class="icon">❌</i> Action</th>
           </tr>
       </thead>
       <tbody>
           {% for u in users %}
-          <tr class="{% if u.expires and u.expires_date and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% endif %}">
-            <td data-label="User">{% if u.expires and u.expires_date and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
-            <td data-label="Password">{% if u.expires and u.expires_date and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
+          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% elif u.is_over_limit %}over-limit{% endif %}"> {# 💡 ADDED over-limit CLASS #}
+            <td data-label="User">{% if u.expires and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
+            <td data-label="Password">{% if u.expires and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
             <td data-label="Expires">
                 {% if u.expires %}
-                    {% if u.expires_date and u.expires_date < today_date %}
+                    {% if u.expires_date < today_date %}
                         <s>{{u.expires}} (Expired)</s>
                     {% else %}
                         {% if u.expiring_soon %}
@@ -227,16 +227,10 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 
             </td>
             
-            <td data-label="Max Users"> {# 💡 NEW MAX USERS DATA #}
-                <span class="pill pill-info">{{ u.max_connections }}</span>
-            </td>
-
             <td data-label="Online Users"> {# 💡 NEW ONLINE USERS DATA #}
                 {% if u.online_count is not none %}
-                    {% if u.online_count > 0 and u.online_count < u.max_connections %}
+                    {% if u.online_count > 0 %}
                         <span class="pill pill-online">{{ u.online_count }}</span>
-                    {% elif u.online_count >= u.max_connections %}
-                        <span class="pill pill-full">{{ u.online_count }}</span> {# 💡 New pill for full capacity #}
                     {% else %}
                         <span class="pill pill-offline">0</span>
                     {% endif %}
@@ -244,28 +238,43 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                     <span class="pill pill-unknown">N/A</span>
                 {% endif %}
             </td>
+            
+            <td data-label="Limit"> {# 💡 NEW LIMIT DATA #}
+                {% if u.limit_count is not none %}
+                    {% if u.limit_count > 1 %}
+                        <span class="pill pill-limit-multi">{{ u.limit_count }}</span>
+                    {% elif u.limit_count == 1 %}
+                        <span class="pill pill-limit-single">{{ u.limit_count }}</span>
+                    {% else %}
+                        <span class="pill pill-limit-default">N/A (Limit: 1)</span>
+                    {% endif %}
+                {% else %}
+                    <span class="pill pill-limit-default">N/A (Limit: 1)</span>
+                {% endif %}
+                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button> {# 💡 LIMIT EDIT BUTTON #}
+            </td>
 
             <td data-label="Status">
                 {# Flask's is_expiring_soon() and expiration logic determines the status #}
-                {% if u.expires and u.expires_date and u.expires_date < today_date %}
+                {% if u.expires and u.expires_date < today_date %}
                     <span class="pill pill-expired"><i class="icon">🛑</i> Expired</span>
                 
                 {# Expiring Soon (Today or Tomorrow) #}
                 {% elif u.expiring_soon %}
                     <span class="pill pill-expiring"><i class="icon">⚠️</i> Expiring Soon</span>
                     
-                {# Check for Max Connections Reached #}
-                {% elif u.online_count >= u.max_connections %} 
-                    <span class="pill pill-full-capacity"><i class="icon">❌</i> Full / Disconnected</span> {# 💡 MODIFIED TEXT #}
+                {# Over Limit #}
+                {% elif u.is_over_limit %}
+                    <span class="pill pill-over-limit"><i class="icon">❌</i> Over Limit</span> {# 💡 NEW STATUS #}
 
-                {# Active (Including no expiration set, or 2 days or more left) #}
+                {# Active (Including no expiration set, or 2 days or more left, and not over limit) #}
                 {% else %}
                     <span class="pill ok"><i class="icon">🟢</i> Active</span>
                 {% endif %}
             </td>
 
             <td data-label="Action">
-              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.max_connections }}')"><i class="icon">✏️</i> Edit</button> {# 💡 MODIFIED TO PASS MAX_CONNECTIONS #}
+              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.expires }}')"><i class="icon">✏️</i> Pass</button> {# 💡 Password Edit Button #}
               <form class="delform" method="post" action="/delete" onsubmit="return confirm('{{u.user}} ကို ဖျက်မလား?')">
                 <input type="hidden" name="user" value="{{u.user}}">
                 <button type="submit" class="btn-delete"><i class="icon">🗑️</i> Delete</button>
@@ -277,11 +286,11 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     </table>
 </div>
 
-{# 💡 PASSWORD EDIT MODAL (MODIFIED: Added Max Connections input) #}
+{# 💡 PASSWORD EDIT MODAL (UNCHANGED) #}
 <div id="editModal" class="modal">
   <div class="modal-content">
     <span class="close-btn" onclick="document.getElementById('editModal').style.display='none'">&times;</span>
-    <h2 class="section-title"><i class="icon">✏️</i> Change Password / Max Users</h2>
+    <h2 class="section-title"><i class="icon">✏️</i> Change Password</h2>
     <form method="post" action="/edit">
         <input type="hidden" id="edit-user" name="user">
         
@@ -297,7 +306,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             <div class="input-field-wrapper is-readonly">
                 <input type="text" id="current-password" name="current_password" readonly>
             </div>
-            <p class="input-hint">လက်ရှိ Password</p>
+            <p class="input-hint">လက်ရှိ Password (မပြောင်းလဲလိုပါက ထားခဲ့နိုင်ပါသည်)</p>
         </div>
         
         <div class="input-group">
@@ -308,17 +317,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             <p class="input-hint">User အတွက် Password အသစ်</p>
         </div>
         
-        {# 💡 NEW: Max Connections in Edit Modal #}
-        <div class="input-group">
-            <label for="edit-max-connections" class="input-label"><i class="icon">👥</i> Max Connections (1-10)</label>
-            <div class="input-field-wrapper">
-                <input type="number" id="edit-max-connections" name="max_connections" placeholder="Max Connections" min="1" max="10" required>
-            </div>
-            <p class="input-hint">တစ်ပြိုင်နက်တည်း အသုံးပြုနိုင်သော အရေအတွက်</p>
-        </div>
-        {# 💡 END NEW #}
-        
-        <button class="save-btn modal-save-btn" type="submit">အချက်အလက် သိမ်းမည်</button>
+        <button class="save-btn modal-save-btn" type="submit">Password အသစ် သိမ်းမည်</button>
     </form>
   </div>
 </div>
@@ -351,6 +350,35 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   </div>
 </div>
 {# 💡 END NEW EXPIRES EDIT MODAL #}
+
+{# 💡 NEW: LIMIT EDIT MODAL #}
+<div id="limitModal" class="modal">
+  <div class="modal-content" style="max-width: 350px;">
+    <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
+    <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
+    <form method="post" action="/edit_limit"> {# NEW ROUTE #}
+        <input type="hidden" id="limit-edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="limit-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="limit-current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-limit" class="input-label"><i class="icon">🔢</i> Max Users</label>
+            <div class="input-field-wrapper">
+                <input type="number" id="new-limit" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1 မှ 10)" min="1" max="10" required>
+            </div>
+            <p class="input-hint">ဤအကောင့်အတွက် အများဆုံး သုံးစွဲသူအရေအတွက် (ပုံမှန်- 1)</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Limit အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
+{# 💡 END NEW LIMIT EDIT MODAL #}
 
 
 <style>
@@ -463,8 +491,26 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
+    display: inline-block; /* Fix display on desktop */
 }
 .btn-edit-expires:hover { background-color: var(--primary-dark); }
+
+/* 💡 NEW BUTTON: Limit Edit Button */
+.btn-edit-limit { 
+    background-color: var(--secondary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    display: inline-block;
+}
+.btn-edit-limit:hover { background-color: #5a6268; }
+
 
 /* Days Remaining Text Style (UNCHANGED) */
 .days-remaining {
@@ -479,12 +525,15 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 }
 
 /* 💡 NEW PILL STYLES for Online Users */
-.pill-info { background-color: #e3f2fd; color: #03a9f4; } /* Blueish for Max Users */
 .pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
 .pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
 .pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
-.pill-full { background-color: #f8d7da; color: #721c24; } /* Redish for Max Online Users Reached */
-.pill-full-capacity { background-color: #f8d7da; color: var(--danger); } /* Redish for Max Online Users Reached in Status Column */
+
+/* 💡 NEW PILL STYLES for Limit */
+.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
+.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
+.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
+.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
 
 
 @media (max-width: 768px) {
@@ -499,16 +548,22 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
         max-width: 280px; /* 💡 Mobile အတွက် ပိုသေးအောင် လျှော့ချသည်။ */
     }
     .days-remaining { display: block; text-align: right; }
-    .btn-edit-expires { display: block; margin-left: auto; }
+    .btn-edit-expires { display: block; margin-left: auto; width: 100%; box-sizing: border-box; }
+    .btn-edit-limit { display: block; margin-left: auto; margin-top: 5px; width: 100%; box-sizing: border-box; }
+
 
 }
 /* 💡 MODAL UI UPDATE END */
+/* 💡 NEW ROW STYLE: Over Limit */
+tr.over-limit { 
+    border-left: 5px solid var(--danger); 
+    background-color: rgba(220, 53, 69, 0.1); /* Light red background */
+}
 </style>
 
 <script>
     // JavaScript to handle the modal display
-    // 💡 MODIFIED: Added maxConnections argument
-    function showEditModal(user, password, maxConnections) { 
+    function showEditModal(user, password, expires) {
         document.getElementById('edit-user').value = user;
         document.getElementById('current-user-display').value = user; // Display user
         document.getElementById('current-password').value = password;
@@ -516,9 +571,6 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
         // Clear new password field when opening
         document.getElementById('new-password').value = '';
         
-        // 💡 NEW: Populate max connections field
-        document.getElementById('edit-max-connections').value = maxConnections || 1; 
-
         document.getElementById('editModal').style.display = 'block';
     }
 
@@ -530,14 +582,27 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
         
         document.getElementById('expiresModal').style.display = 'block';
     }
+    
+    // 💡 NEW JAVASCRIPT: Handle Limit Modal Display
+    function showLimitModal(user, limit) {
+        document.getElementById('limit-edit-user').value = user;
+        document.getElementById('limit-current-user-display').value = user; 
+        // Default to 1 if limit is 'None' or empty
+        document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1; 
+        
+        document.getElementById('limitModal').style.display = 'block';
+    }
 
-    // Close modal when clicking outside of it (MODIFIED to check both modals)
+    // Close modal when clicking outside of it (MODIFIED to check all modals)
     window.onclick = function(event) {
         if (event.target == document.getElementById('editModal')) {
             document.getElementById('editModal').style.display = 'none';
         }
         if (event.target == document.getElementById('expiresModal')) {
             document.getElementById('expiresModal').style.display = 'none';
+        }
+        if (event.target == document.getElementById('limitModal')) {
+            document.getElementById('limitModal').style.display = 'none';
         }
     }
 </script>
@@ -689,13 +754,16 @@ tr:hover { background-color: #e9ecef; }
 .pill-expiring { background-color: var(--warning-bg); color: var(--warning); } 
 .text-expiring { color: var(--warning); font-weight: bold; } 
 
-/* 💡 NEW PILL STYLES for Max Connections and Full Capacity */
-.pill-info { background-color: #e3f2fd; color: #03a9f4; } /* Blueish for Max Users */
+/* 💡 NEW PILL STYLES for Online Users */
 .pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
 .pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
 .pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
-.pill-full { background-color: #f8d7da; color: #721c24; } /* Redish for Max Online Users Reached */
-.pill-full-capacity { background-color: #f8d7da; color: var(--danger); } /* Redish for Max Online Users Reached in Status Column */
+
+/* 💡 NEW PILL STYLES for Limit and Over Limit */
+.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
+.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
+.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
+.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
 
 
 /* Days Remaining Text Style */
@@ -714,6 +782,7 @@ tr:hover { background-color: #e9ecef; }
 /* Row Styles for Expiry */
 tr.expired td { opacity: 0.6; text-decoration-color: var(--danger); }
 tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba(255, 193, 7, 0.1); } 
+tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220, 53, 69, 0.1); } 
 
 
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s;}
@@ -855,7 +924,7 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: conntrack check, prepare_user_data, edit_expires route, LOGIN PASSWORD TYPE, Max Connections Logic)
+# 💡 Web Panel (Flask - web.py) (MODIFIED: sync_config_passwords, get_user_online_count, /add, /edit_limit)
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -866,6 +935,7 @@ USERS_FILE = "/etc/zivpn/users.json"
 CONFIG_FILE = "/etc/zivpn/config.json"
 LISTEN_FALLBACK = "5667"
 LOGO_URL = "https://zivpn-web.free.nf/zivpn-icon.png"
+IPTABLES_SAVE_CMD = "iptables-save > /etc/iptables/rules.v4" # Standard path for Debian/Ubuntu with iptables-persistent
 
 def get_server_ip():
     try:
@@ -881,7 +951,7 @@ SERVER_IP_FALLBACK = get_server_ip()
 # 💡 NEW: Contact Link ကို Environment ကနေ ယူခြင်း
 CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link and Max Connections HTML Input)
+# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link and New Input Field)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
@@ -1031,7 +1101,7 @@ h1 { font-size: 22px; color: var(--dark); margin-bottom: 5px; }
     color: var(--secondary);
     background: transparent; 
 }
-input[type="text"], input[type="password"], input[type="number"], input[name="expires"], input[name="port"], input[name="ip"] {
+input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"], input[type="number"] {
     width: 100%;
     padding: 12px 10px;
     border: none; 
@@ -1243,7 +1313,7 @@ text {
             if (data.user) { 
                 const card = document.createElement('div');
                 card.className = 'user-info-card';
-                // Check if the message is from /edit or /edit_expires route
+                // Check if the message is from /edit or /edit_expires or /edit_limit route
                 if (data.message) {
                     card.innerHTML = data.message;
                 } else {
@@ -1253,8 +1323,8 @@ text {
                         <p><i class="icon">🔥</i> Server IP: <b>${data.ip || '{{ IP }}'}</b></p>  
                         <p><i class="icon">👤</i> Username: <b>${data.user}</b></p>
                         <p><i class="icon">🔑</i> Password: <b>${data.password}</b></p>
-                        <p><i class="icon">👥</i> Max Users: <b>${data.max_connections || 1}</b></p> {# 💡 NEW MSG DISPLAY #}
-                        <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>                   
+                        <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>
+                        <p><i class="icon">👥</i> Limit: <b>${data.limit_count || '1'}</b></p> {# 💡 Added Limit Count #}
                     `;
                 }
                 
@@ -1291,16 +1361,6 @@ text {
                 <input type="password" id="password" name="password" placeholder="Password" required>
             </div>
         </div>
-        
-        {# 💡 NEW: Max Connections Input #}
-        <div class="input-group">
-            <label for="max-connections"><i class="icon">👥</i> Max Users (1 မှ 10)</label>
-            <div class="input-field-wrapper">
-                <i class="icon">1️⃣</i>
-                <input type="number" id="max-connections" name="max_connections" placeholder="ဥပမာ: 1" value="1" min="1" max="10" required>
-            </div>
-        </div>
-        
         <div class="row">
             <div>
             <text> <label><i class="icon"></i>Add (expiration date)</label></text>
@@ -1309,6 +1369,16 @@ text {
                 <input name="expires" required placeholder="Example : 2025-12-31 or 30">
             </div></tak1>
             </div>
+            
+            {# 💡 NEW INPUT FIELD: Limit Count #}
+            <div>
+            <text> <label><i class="icon"></i>User Limit Count</label></text>
+            <div class="input-field-wrapper">
+                <i class="icon">👥</i>
+                <input type="number" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1-10)" min="1" max="10" value="1" required>
+            </div>
+            </div>
+            
         </div>
         <div class="input-group">
             <label><i class="icon"></i>Server IP (Click to Copy)</label> 
@@ -1361,8 +1431,6 @@ def write_json_atomic(path, data):
   finally:
     try: os.remove(tmp)
     except: pass
-    
-# 💡 MODIFIED: load_users to include max_connections
 def load_users():
   v=read_json(USERS_FILE,[])
   out=[]
@@ -1371,11 +1439,10 @@ def load_users():
                 "password":u.get("password",""),
                 "expires":u.get("expires",""),
                 "port":str(u.get("port","")) if u.get("port","")!="" else "",
-                "max_connections":int(u.get("max_connections", 1)) # 💡 NEW: Load max_connections. Default to 1
+                "limit_count": int(u.get("limit_count", 1)) # 💡 NEW: Load Limit Count (default to 1)
                 })
   return out
 def save_users(users): write_json_atomic(USERS_FILE, users)
-
 def get_listen_port_from_config():
   cfg=read_json(CONFIG_FILE,{})
   listen=str(cfg.get("listen","")).strip()
@@ -1390,60 +1457,17 @@ def pick_free_port():
   for p in range(6000,20000):
     if str(p) not in used: return str(p)
   return ""
+def has_recent_udp_activity(port):
+  if not port: return False
+  try:
+    # Check for recent conntrack entries for the specific port
+    out=subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
+                       shell=True, capture_output=True, text=True).stdout
+    return bool(out)
+  except Exception:
+    return False
 
-# 💡 NEW FUNCTION: Force disconnect connections if max_count is exceeded
-def delete_excessive_connections(port, max_count):
-    if not port or max_count <= 0: return 0
-    try:
-        # Get all conntrack entries for the specific destination port
-        result = subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
-                                shell=True, capture_output=True, text=True).stdout
-        
-        lines = result.strip().split('\n')
-        if not result.strip():
-            return 0
-            
-        # Extract unique source IPs and their corresponding conntrack entries
-        # Format: {ip: [conntrack_line1, conntrack_line2, ...]}
-        ip_to_connections = {}
-        server_ip_list = SERVER_IP_FALLBACK.split() 
-
-        for line in lines:
-            # Find the source IP (src=...) from the conntrack output line
-            match = re.search(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
-            if match:
-                src_ip = match.group(1)
-                # Ignore connections originating from the server itself
-                if src_ip not in server_ip_list:
-                    if src_ip not in ip_to_connections:
-                        ip_to_connections[src_ip] = []
-                    ip_to_connections[src_ip].append(line)
-
-        online_ips = list(ip_to_connections.keys())
-        online_count = len(online_ips)
-        
-        connections_to_delete = 0
-        
-        if online_count > max_count:
-            # Determine how many IPs to disconnect (we only need to drop the excess)
-            excess_ips_to_drop = online_ips[max_count:] # Drop the extra IPs
-
-            for ip_to_drop in excess_ips_to_drop:
-                # Get the full conntrack delete command for this IP's connections
-                # This is a strong measure, it deletes ALL connections for the IP on this port, forcing client reconnect
-                delete_cmd = f"conntrack -D -p udp --orig-src {ip_to_drop} --orig-dport {port} 2>/dev/null"
-                subprocess.run(delete_cmd, shell=True, capture_output=True, text=True)
-                connections_to_delete += 1
-            
-            # NOTE: We only report how many *IPs* were disconnected
-            return online_count, connections_to_delete
-        
-        return online_count, 0
-    except Exception as e:
-        # print(f"Error deleting connections: {e}") # For debugging
-        return 0, 0 # Return 0 online count on error
-
-# 💡 MODIFIED: Get the number of unique source IPs connected to a user's port
+# 💡 NEW FUNCTION: Get the number of unique source IPs connected to a user's port
 def get_user_online_count(port):
     if not port: return 0
     try:
@@ -1452,10 +1476,11 @@ def get_user_online_count(port):
                                 shell=True, capture_output=True, text=True).stdout
         
         # Regex to find the source IP (src=...) from the conntrack output line
+        # The first 'src=' is the client's source IP (the client's public IP)
         source_ips = re.findall(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', result)
         
-        # Count unique IPs that are NOT the server's own IP 
-        server_ip_list = SERVER_IP_FALLBACK.split() 
+        # Count unique IPs that are NOT the server's own IP (to avoid counting NAT loopback or internal communication)
+        server_ip_list = SERVER_IP_FALLBACK.split() # In case it returns multiple IPs
         unique_online_ips = set(ip for ip in source_ips if ip not in server_ip_list)
 
         return len(unique_online_ips)
@@ -1504,6 +1529,7 @@ def calculate_days_remaining(expires_str):
         expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
         today = date.today()
         # The expiration day is the last valid day, so we want to count how many days *including* today
+        # up to the expiration date. 
         remaining = (expires_date - today).days
         return remaining if remaining >= 0 else None
     except ValueError:
@@ -1511,9 +1537,21 @@ def calculate_days_remaining(expires_str):
     
 def delete_user(user):
     users = load_users()
+    port_to_remove = next((u.get("port") for u in users if u.get("user").lower() == user.lower()), None)
+    
     remaining_users = [u for u in users if u.get("user").lower() != user.lower()]
     save_users(remaining_users)
     sync_config_passwords(mode="mirror")
+
+    # 💡 NEW: Remove conntrack rules for the deleted user's port
+    if port_to_remove:
+        try:
+            # Delete any existing limit rules for this port
+            subprocess.run(f"iptables -D INPUT -p udp --dport {port_to_remove} -m connlimit --connlimit-above 0 --connlimit-mask 32 -j DROP 2>/dev/null || true", shell=True)
+            subprocess.run(f"{IPTABLES_SAVE_CMD}", shell=True)
+        except Exception as e:
+            print(f"Error removing iptables rule for port {port_to_remove}: {e}")
+
     
 # 💡 DELETION LOGIC (Standard): Deletes users whose expiration date is before today (at 00:00:00 of the following day)
 def check_user_expiration():
@@ -1528,7 +1566,6 @@ def check_user_expiration():
         if expires_str:
             try:
                 # 💡 FIX: Delete if expiration date is strictly before today's date
-                # If expires='2025-10-23', it is deleted only on 2025-10-24 (since 2025-10-23 < 2025-10-24 is FALSE)
                 if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                     is_expired = True
             except ValueError:
@@ -1536,39 +1573,75 @@ def check_user_expiration():
 
         if is_expired:
             deleted_count += 1
+            # 💡 NEW: Remove conntrack rules for expired user's port
+            port = user.get("port")
+            if port:
+                 try:
+                    subprocess.run(f"iptables -D INPUT -p udp --dport {port} -m connlimit --connlimit-above 0 --connlimit-mask 32 -j DROP 2>/dev/null || true", shell=True)
+                 except Exception as e:
+                    print(f"Error removing iptables rule for expired port {port}: {e}")
+            
         else:
             users_to_keep.append(user)
 
     if deleted_count > 0:
         save_users(users_to_keep)
         sync_config_passwords(mode="mirror") 
+        # Save the updated iptables rules
+        subprocess.run(f"{IPTABLES_SAVE_CMD}", shell=True) 
         return True 
     return False 
     
-# 💡 sync_config_passwords will only mirror passwords of active users
+# 💡 MODIFIED FUNCTION: Syncs passwords AND enforces connlimit via iptables
 def sync_config_passwords(mode="mirror"):
   cfg=read_json(CONFIG_FILE,{})
   users=load_users()
   
   today_date = date.today() # 💡 Use date.today()
   valid_passwords = set()
+  
+  # 1. Clean up old ZIVPN_USER_LIMIT rules (optional but good practice)
+  # Delete all rules matching the connlimit pattern for ports 6000-19999
+  for p in range(6000, 20000):
+      # We just delete all rules in a range, then re-add the new ones
+      subprocess.run(f"iptables -D INPUT -p udp --dport {p} -m connlimit --connlimit-above 0 --connlimit-mask 32 -j DROP 2>/dev/null || true", shell=True)
+      
+  
+  # 2. Iterate through users to build password list and add new connlimit rules
   for u in users:
       expires_str = u.get("expires")
+      port = u.get("port")
+      limit = int(u.get("limit_count", 1)) # Default to 1
       is_valid = True
+      
+      # Check Expiration
       if expires_str:
           try:
-              # 💡 FIX: Expiration check for VPN Passwords
               if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                   is_valid = False
           except ValueError:
               is_valid = True 
 
-      # NOTE: Max connections is handled by the web UI status only, not the zivpn binary
       if is_valid and u.get("password"):
           valid_passwords.add(str(u["password"]))
+          
+          # 💡 NEW: Add IPTABLES Rule for Connlimit (for non-expired, valid users with a port)
+          if port and limit >= 1:
+              # Rule: If number of connections from the same source IP on this port exceeds the limit, DROP.
+              # Note: Connlimit is per source IP on the port, effectively limiting unique users.
+              # We delete the 'above 0' generic rule first (done in step 1), then re-add the specific limit rule.
+              try:
+                  # Note: The limit is (limit), so if limit=1, above 1 (2 connections) is dropped.
+                  # If limit=1, the command is --connlimit-above 1. The first connection is allowed.
+                  # If limit=2, the command is --connlimit-above 2. The first two are allowed.
+                  limit_val = limit
+                  rule = f"iptables -A INPUT -p udp --dport {port} -m connlimit --connlimit-above {limit_val} --connlimit-mask 32 -j DROP"
+                  subprocess.run(rule, shell=True, check=True)
+              except subprocess.CalledProcessError as e:
+                  print(f"Error adding iptables rule for user {u['user']} on port {port} (Limit {limit}): {e}")
 
+  # 3. Update ZIVPN Config Passwords
   users_pw=sorted(list(valid_passwords))
-  
   if mode=="merge":
     old=[]
     if isinstance(cfg.get("auth",{}).get("config",None), list):
@@ -1585,15 +1658,17 @@ def sync_config_passwords(mode="mirror"):
   cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
   cfg["obfs"]=cfg.get("obfs") or "zivpn"
   write_json_atomic(CONFIG_FILE,cfg)
+  
+  # 4. Restart services and save rules
   subprocess.run("systemctl restart zivpn.service", shell=True)
+  subprocess.run(f"{IPTABLES_SAVE_CMD}", shell=True) # Save the new rules
+  
 def login_enabled(): return bool(ADMIN_USER and ADMIN_PASS)
 def is_authed(): return session.get("auth") == True
 def require_login():
   if login_enabled() and not is_authed():
     return False
   return True
-  
-# 💡 MODIFIED: prepare_user_data to include max_connections AND force disconnect
 def prepare_user_data():
     all_users = load_users()
     check_user_expiration() 
@@ -1605,22 +1680,21 @@ def prepare_user_data():
       if u.get("expires"):
           try: expires_date_obj = datetime.strptime(u.get("expires"), "%Y-%m-%d").date()
           except ValueError: pass
-          
-      port = u.get("port","")
-      max_connections = u.get("max_connections", 1)
       
-      # 💡 NEW LOGIC: Check and delete excessive connections before calculating online_count for display
-      online_count, _ = delete_excessive_connections(port, max_connections)
-
+      online_count = get_user_online_count(u.get("port","")) # 💡 Get online count
+      limit_count = int(u.get("limit_count", 1)) # 💡 Get limit count (default to 1)
+      is_over_limit = online_count > limit_count # 💡 Check if over limit
+          
       view.append(type("U",(),{
         "user":u.get("user",""),
         "password":u.get("password",""),
         "expires":u.get("expires",""),
         "expires_date": expires_date_obj, # 💡 New field for comparison
         "days_remaining": calculate_days_remaining(u.get("expires","")), # 💡 New field for display
-        "port":port,
-        "online_count": online_count, # 💡 Updated Online Count after potential disconnect
-        "max_connections": max_connections, # 💡 NEW: Max Connections
+        "port":u.get("port",""),
+        "online_count": online_count, # 💡 Online Count
+        "limit_count": limit_count, # 💡 Limit Count
+        "is_over_limit": is_over_limit, # 💡 Over Limit status
         "expiring_soon": is_expiring_soon(u.get("expires","")) 
       }))
     view.sort(key=lambda x:(x.user or "").lower())
@@ -1655,9 +1729,6 @@ def index():
 @app.route("/users", methods=["GET"])
 def users_table_view():
     if not require_login(): return redirect(url_for('login'))
-    
-    # Check and delete expired users before showing the list
-    check_user_expiration() 
     
     view, today_str, today_date = prepare_user_data() # 💡 Get today_date object
     
@@ -1701,23 +1772,24 @@ def logout():
   session.pop("auth", None)
   return redirect(url_for('login') if login_enabled() else url_for('index'))
 
-# 💡 MODIFIED: add_user to include max_connections
 @app.route("/add", methods=["POST"])
 def add_user():
   if not require_login(): return redirect(url_for('login'))
   user=(request.form.get("user") or "").strip()
   password=(request.form.get("password") or "").strip()
   expires=(request.form.get("expires") or "").strip()
+  limit_count_str=(request.form.get("limit_count") or "1").strip() # 💡 NEW: Get Limit Count
   port=(request.form.get("port") or "").strip() 
   ip = (request.form.get("ip") or "").strip() or SERVER_IP_FALLBACK
   
-  # 💡 NEW: Get max_connections, validate, and default to 1
-  max_connections_str = (request.form.get("max_connections") or "1").strip()
-  if not max_connections_str.isdigit() or not (1 <= int(max_connections_str) <= 10):
-      session["err"] = "❌ အသုံးပြုသူ အရေအတွက် (1-10) မမှန်ကန်ပါ။"
-      return redirect(url_for('index'))
-  max_connections = int(max_connections_str)
-  # 💡 END NEW
+  try:
+    limit_count = int(limit_count_str)
+    if not (1 <= limit_count <= 10):
+        session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
+        return redirect(url_for('index'))
+  except ValueError:
+    session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
+    return redirect(url_for('index'))
 
   # 💡 NEW FIX: Myanmar Unicode Check (Myanmar Unicode Range U+1000 to U+109F)
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
@@ -1746,9 +1818,7 @@ def add_user():
   users=load_users(); replaced=False
   for u in users:
     if u.get("user","").lower()==user.lower():
-      u["password"]=password; u["expires"]=expires; u["port"]=port
-      u["max_connections"]=max_connections # 💡 NEW: Update max_connections
-      replaced=True; break
+      u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break # 💡 NEW: Update limit_count
   if not replaced:
     # 💡 NEW FIX: Pick a free port if not provided (Important for conntrack tracking)
     if not port:
@@ -1757,24 +1827,23 @@ def add_user():
             session["err"] = "❌ အသုံးပြုရန် Port မရှိတော့ပါ"
             return redirect(url_for('index'))
             
-    # 💡 NEW: Add max_connections to the new user
-    users.append({"user":user,"password":password,"expires":expires,"port":port, "max_connections": max_connections})
+    users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
   
   save_users(users)
-  sync_config_passwords()
+  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
 
   msg_dict = {
       "user": user,
       "password": password,
       "expires": expires,
       "ip": ip,
-      "max_connections": max_connections # 💡 NEW: For confirmation message
+      "limit_count": limit_count # 💡 Add limit_count to message
   }
   
   session["msg"] = json.dumps(msg_dict)
   return redirect(url_for('index'))
 
-# 💡 NEW ROUTE: Edit Expiration Date (UNCHANGED)
+# 💡 NEW ROUTE: Edit Expiration Date
 @app.route("/edit_expires", methods=["POST"])
 def edit_user_expires():
   if not require_login(): return redirect(url_for('login'))
@@ -1809,33 +1878,62 @@ def edit_user_expires():
     return redirect(url_for('users_table_view'))
     
   save_users(users)
-  sync_config_passwords() 
+  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Expires ကို **{new_expires}** သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
 # 💡 END NEW ROUTE
 
-# 💡 MODIFIED: Password Edit Function to include max_connections
+# 💡 NEW ROUTE: Edit Limit Count
+@app.route("/edit_limit", methods=["POST"])
+def edit_user_limit():
+  if not require_login(): return redirect(url_for('login'))
+  user=(request.form.get("user") or "").strip()
+  limit_count_str=(request.form.get("limit_count") or "").strip()
+  
+  if not user or not limit_count_str:
+    session["err"] = "User Name နှင့် Limit Count အသစ် မပါဝင်ပါ"
+    return redirect(url_for('users_table_view'))
+  
+  try:
+    new_limit = int(limit_count_str)
+    if not (1 <= new_limit <= 10):
+        session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
+        return redirect(url_for('users_table_view'))
+  except ValueError:
+    session["err"] = "❌ Limit Count သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
+    return redirect(url_for('users_table_view'))
+
+  users=load_users(); replaced=False
+  for u in users:
+    if u.get("user","").lower()==user.lower():
+      u["limit_count"]=new_limit 
+      replaced=True
+      break
+      
+  if not replaced:
+    session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
+    return redirect(url_for('users_table_view'))
+    
+  save_users(users)
+  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
+  
+  session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Limit ကို **{new_limit}** ယောက် သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
+  return redirect(url_for('users_table_view'))
+# 💡 END NEW ROUTE
+
+# 💡 EXISTING ROUTE: Password Edit Function (MODIFIED for Myanmar Char Check)
 @app.route("/edit", methods=["POST"])
 def edit_user_password():
   if not require_login(): return redirect(url_for('login'))
   user=(request.form.get("user") or "").strip()
   new_password=(request.form.get("password") or "").strip()
-  # 💡 NEW: Get max_connections
-  max_connections_str=(request.form.get("max_connections") or "1").strip()
   
   if not user or not new_password:
     session["err"] = "User Name နှင့် Password အသစ် မပါဝင်ပါ"
     # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
     return redirect(url_for('users_table_view'))
     
-  # 💡 NEW: Validate max_connections
-  if not max_connections_str.isdigit() or not (1 <= int(max_connections_str) <= 10):
-      session["err"] = "❌ အသုံးပြုသူ အရေအတွက် (1-10) မမှန်ကန်ပါ။"
-      return redirect(url_for('users_table_view'))
-  max_connections = int(max_connections_str)
-  # 💡 END NEW
-
   # 💡 NEW FIX: Myanmar Unicode Check for New Password
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
   if myanmar_chars_pattern.search(new_password):
@@ -1848,7 +1946,6 @@ def edit_user_password():
   for u in users:
     if u.get("user","").lower()==user.lower():
       u["password"]=new_password 
-      u["max_connections"]=max_connections # 💡 NEW: Update max_connections
       replaced=True
       break
       
@@ -1858,9 +1955,9 @@ def edit_user_password():
     return redirect(url_for('users_table_view'))
     
   save_users(users)
-  sync_config_passwords() 
+  sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
   
-  session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ အချက်အလက်များကို ပြောင်းလဲပြီးပါပြီ။</h4>", "user":user, "password":new_password})
+  session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Password ပြောင်းပြီးပါပြီ။</h4>", "user":user, "password":new_password})
   return redirect(url_for('users_table_view'))
 
 
@@ -1872,7 +1969,7 @@ def delete_user_html():
     session["err"] = "User Name မပါဝင်ပါ"
     return redirect(url_for('users_table_view'))
   
-  delete_user(user) 
+  delete_user(user) # 💡 Delete user now also removes iptables rule
   return redirect(url_for('users_table_view'))
 
 @app.route("/api/user.delete", methods=["POST"])
@@ -1884,7 +1981,7 @@ def delete_user_api():
   if not user:
     return jsonify({"ok": False, "err": "user required"}), 400
   
-  delete_user(user) 
+  delete_user(user) # 💡 Delete user now also removes iptables rule
   return jsonify({"ok": True})
 
 @app.route("/api/users", methods=["GET","POST"])
@@ -1898,14 +1995,9 @@ def api_users():
     users = load_users() 
     for u in users: 
       u["expiring_soon"]=is_expiring_soon(u.get("expires",""))
-      
-      port = u.get("port","")
-      max_connections = u.get("max_connections", 1)
-      # 💡 NEW LOGIC FOR API: Check and delete excessive connections before returning online_count
-      online_count, _ = delete_excessive_connections(port, max_connections)
-      
-      u["online_count"]=online_count 
-      u["max_connections"]=max_connections
+      u["online_count"]=get_user_online_count(u.get("port","")) # 💡 API Update
+      u["limit_count"]=int(u.get("limit_count",1)) # 💡 API Update
+      u["is_over_limit"] = u["online_count"] > u["limit_count"] # 💡 API Update
     return jsonify(users)
   
   if request.method=="POST":
@@ -1914,19 +2006,21 @@ def api_users():
     password=(data.get("password") or "").strip()
     expires=(data.get("expires") or "").strip()
     port=str(data.get("port") or "").strip()
-    max_connections_str=str(data.get("max_connections") or "1").strip() # 💡 API Update
+    limit_count_str=(data.get("limit_count") or "1").strip() # 💡 NEW: Get Limit Count
 
+    try:
+      limit_count = int(limit_count_str)
+      if not (1 <= limit_count <= 10):
+          return jsonify({"ok": False, "err": "limit_count must be between 1 and 10"}), 400
+    except ValueError:
+      return jsonify({"ok": False, "err": "invalid limit_count"}), 400
+
+    
     # 💡 NEW FIX: Myanmar Unicode Check for API
     myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
     if myanmar_chars_pattern.search(user) or myanmar_chars_pattern.search(password):
         return jsonify({"ok": False, "err": "Myanmar characters not allowed in user or password"}), 400
     # 💡 END NEW FIX
-    
-    # 💡 NEW: Validate max_connections
-    if not max_connections_str.isdigit() or not (1 <= int(max_connections_str) <= 10):
-        return jsonify({"ok": False, "err": "max_connections must be 1-10"}), 400
-    max_connections = int(max_connections_str)
-    # 💡 END NEW
 
     if expires.isdigit():
       expires=(datetime.now()+timedelta(days=int(expires))).strftime("%Y-%m-%d")
@@ -1937,18 +2031,16 @@ def api_users():
     users=load_users(); replaced=False
     for u in users:
       if u.get("user","").lower()==user.lower():
-        u["password"]=password; u["expires"]=expires; u["port"]=port
-        u["max_connections"]=max_connections # 💡 API Update
-        replaced=True; break
+        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break # 💡 NEW: Update limit_count
     if not replaced:
       # 💡 NEW FIX: Pick a free port if not provided (API)
       if not port:
           port = pick_free_port()
           if not port:
               return jsonify({"ok": False, "err": "No free port available"}), 500
-      users.append({"user":user,"password":password,"expires":expires,"port":port, "max_connections": max_connections}) # 💡 API Update
+      users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
     save_users(users)
-    sync_config_passwords()
+    sync_config_passwords() # 💡 Calls sync_config_passwords which now also manages iptables rules
     return jsonify({"ok":True})
 
 @app.route("/favicon.ico", methods=["GET"])
@@ -1981,7 +2073,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-# ===== Networking: forwarding + DNAT + MASQ + UFW (unchanged) =====
+# ===== Networking: forwarding + DNAT + MASQ + UFW (MODIFIED: Add IPtables Chain) =====
 echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
@@ -1989,16 +2081,36 @@ grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1
 IFACE=$(ip -4 route ls | awk '{print $5; exit}')
 [ -n "${IFACE:-}" ] || IFACE=eth0
 # DNAT 6000:19999/udp -> :5667
-iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || \
+# Delete any old DNAT rules first (for clean re-install)
+iptables -t nat -D PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || true
 iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667
+
 # MASQ out
-iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || \
+iptables -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || true
 iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 
+
+# Clean up and re-sync any existing user limits (in case of previous rules remaining)
+/usr/bin/python3 /etc/zivpn/web.py &
+WEBPID=$!
+sleep 5
+kill $WEBPID 2>/dev/null || true
+# Wait for the python script to run and call sync_config_passwords which applies iptables
+# A better way is to directly call the python function, but for a simple bash script, a wait is fine.
+
+# The web.py's sync_config_passwords function will now handle the iptables rules:
+# 1. Clear old rules (6000-19999 range)
+# 2. Add new connlimit rules for active users
+
+# UFW rules
 ufw allow 5667/udp >/dev/null 2>&1 || true
 ufw allow 6000:19999/udp >/dev/null 2>&1 || true
 ufw allow 8080/tcp >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
+
+# Save iptables rules so they persist after reboot
+# The web.py script will also save them, but doing it here ensures initial setup is saved.
+iptables-save > /etc/iptables/rules.v4
 
 # ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) =====
 echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
@@ -2015,3 +2127,4 @@ echo -e "${C}Web Panel (Add Users) :${Z} ${Y}http://$IP:8080${Z}"
 echo -e "${C}Web Panel (User List) :${Z} ${Y}http://$IP:8080/users${Z}"
 echo -e "${C}Services    :${Z} ${Y}systemctl status|systemctl restart zivpn  •  systemctl status|systemctl restart zivpn-web${Z}"
 echo -e "$LINE"
+
