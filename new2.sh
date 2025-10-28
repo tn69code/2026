@@ -1,6 +1,6 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
-# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL + MAX CONNECTIONS ==================================
+# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL + MAX CONNECTIONS (FORCE DISCONNECT LOGIC ADDED) ==================================
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -255,7 +255,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                     
                 {# Check for Max Connections Reached #}
                 {% elif u.online_count >= u.max_connections %} 
-                    <span class="pill pill-full-capacity"><i class="icon">❌</i> Full</span>
+                    <span class="pill pill-full-capacity"><i class="icon">❌</i> Full / Disconnected</span> {# 💡 MODIFIED TEXT #}
 
                 {# Active (Including no expiration set, or 2 days or more left) #}
                 {% else %}
@@ -1389,17 +1389,60 @@ def pick_free_port():
   for p in range(6000,20000):
     if str(p) not in used: return str(p)
   return ""
-def has_recent_udp_activity(port):
-  if not port: return False
-  try:
-    # Check for recent conntrack entries for the specific port
-    out=subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
-                       shell=True, capture_output=True, text=True).stdout
-    return bool(out)
-  except Exception:
-    return False
 
-# 💡 NEW FUNCTION: Get the number of unique source IPs connected to a user's port (UNCHANGED LOGIC)
+# 💡 NEW FUNCTION: Force disconnect connections if max_count is exceeded
+def delete_excessive_connections(port, max_count):
+    if not port or max_count <= 0: return 0
+    try:
+        # Get all conntrack entries for the specific destination port
+        result = subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
+                                shell=True, capture_output=True, text=True).stdout
+        
+        lines = result.strip().split('\n')
+        if not result.strip():
+            return 0
+            
+        # Extract unique source IPs and their corresponding conntrack entries
+        # Format: {ip: [conntrack_line1, conntrack_line2, ...]}
+        ip_to_connections = {}
+        server_ip_list = SERVER_IP_FALLBACK.split() 
+
+        for line in lines:
+            # Find the source IP (src=...) from the conntrack output line
+            match = re.search(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+            if match:
+                src_ip = match.group(1)
+                # Ignore connections originating from the server itself
+                if src_ip not in server_ip_list:
+                    if src_ip not in ip_to_connections:
+                        ip_to_connections[src_ip] = []
+                    ip_to_connections[src_ip].append(line)
+
+        online_ips = list(ip_to_connections.keys())
+        online_count = len(online_ips)
+        
+        connections_to_delete = 0
+        
+        if online_count > max_count:
+            # Determine how many IPs to disconnect (we only need to drop the excess)
+            excess_ips_to_drop = online_ips[max_count:] # Drop the extra IPs
+
+            for ip_to_drop in excess_ips_to_drop:
+                # Get the full conntrack delete command for this IP's connections
+                # This is a strong measure, it deletes ALL connections for the IP on this port, forcing client reconnect
+                delete_cmd = f"conntrack -D -p udp --orig-src {ip_to_drop} --orig-dport {port} 2>/dev/null"
+                subprocess.run(delete_cmd, shell=True, capture_output=True, text=True)
+                connections_to_delete += 1
+            
+            # NOTE: We only report how many *IPs* were disconnected
+            return online_count, connections_to_delete
+        
+        return online_count, 0
+    except Exception as e:
+        # print(f"Error deleting connections: {e}") # For debugging
+        return 0, 0 # Return 0 online count on error
+
+# 💡 MODIFIED: Get the number of unique source IPs connected to a user's port
 def get_user_online_count(port):
     if not port: return 0
     try:
@@ -1549,7 +1592,7 @@ def require_login():
     return False
   return True
   
-# 💡 MODIFIED: prepare_user_data to include max_connections
+# 💡 MODIFIED: prepare_user_data to include max_connections AND force disconnect
 def prepare_user_data():
     all_users = load_users()
     check_user_expiration() 
@@ -1562,15 +1605,21 @@ def prepare_user_data():
           try: expires_date_obj = datetime.strptime(u.get("expires"), "%Y-%m-%d").date()
           except ValueError: pass
           
+      port = u.get("port","")
+      max_connections = u.get("max_connections", 1)
+      
+      # 💡 NEW LOGIC: Check and delete excessive connections before calculating online_count for display
+      online_count, _ = delete_excessive_connections(port, max_connections)
+
       view.append(type("U",(),{
         "user":u.get("user",""),
         "password":u.get("password",""),
         "expires":u.get("expires",""),
         "expires_date": expires_date_obj, # 💡 New field for comparison
         "days_remaining": calculate_days_remaining(u.get("expires","")), # 💡 New field for display
-        "port":u.get("port",""),
-        "online_count": get_user_online_count(u.get("port","")), # 💡 NEW: Online Count
-        "max_connections": u.get("max_connections", 1), # 💡 NEW: Max Connections
+        "port":port,
+        "online_count": online_count, # 💡 Updated Online Count after potential disconnect
+        "max_connections": max_connections, # 💡 NEW: Max Connections
         "expiring_soon": is_expiring_soon(u.get("expires","")) 
       }))
     view.sort(key=lambda x:(x.user or "").lower())
@@ -1845,8 +1894,14 @@ def api_users():
     users = load_users() 
     for u in users: 
       u["expiring_soon"]=is_expiring_soon(u.get("expires",""))
-      u["online_count"]=get_user_online_count(u.get("port","")) # 💡 API Update
-      u["max_connections"]=u.get("max_connections", 1) # 💡 API Update
+      
+      port = u.get("port","")
+      max_connections = u.get("max_connections", 1)
+      # 💡 NEW LOGIC FOR API: Check and delete excessive connections before returning online_count
+      online_count, _ = delete_excessive_connections(port, max_connections)
+      
+      u["online_count"]=online_count 
+      u["max_connections"]=max_connections
     return jsonify(users)
   
   if request.method=="POST":
@@ -1956,3 +2011,4 @@ echo -e "${C}Web Panel (Add Users) :${Z} ${Y}http://$IP:8080${Z}"
 echo -e "${C}Web Panel (User List) :${Z} ${Y}http://$IP:8080/users${Z}"
 echo -e "${C}Services    :${Z} ${Y}systemctl status|systemctl restart zivpn  •  systemctl status|systemctl restart zivpn-web${Z}"
 echo -e "$LINE"
+
