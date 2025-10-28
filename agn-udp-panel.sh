@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 PANEL_PORT="8080"
-# PANEL_DIR="/opt/agn-udp-panel"
+PANEL_DIR="/opt/agn-udp-panel"
 REPO_URL="https://github.com/khaledagn/AGN-UDP.git"
 SERVICE_NAME="agn-udp-panel"
 
