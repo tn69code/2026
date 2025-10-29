@@ -1,29 +1,28 @@
 #!/bin/bash
-# ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
-# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
+# ZIVPN UDP Server + Web UI (Myanmar) - Full Installation Script
+# (Colorless and Verbose Output for Clarity)
 set -euo pipefail
 
-# ===== Pretty (CLEANED UP) =====
-B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
-LINE="${B}────────────────────────────────────────────────────────${Z}"
+# ===== Pretty (CLEANED UP) - REMOVED COLORS =====
+LINE="────────────────────────────────────────────────────────"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး)${Z}"
+    echo -e "ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + Limit ကျော်လွန်ပါက Auto-Delete ပြုလုပ်မည့် စနစ်)"
     echo -e "$LINE"
-    echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
+    echo -e "သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။\n"
 }
 say 
 
-# ===== Root check (unchanged) =====
+# ===== Root check =====
 if [ "$(id -u)" -ne 0 ]; then
-  echo -e "${R}ဤ script ကို root အဖြစ် run ရပါမယ် (sudo -i)${Z}"; exit 1
+  echo "ဤ script ကို root အဖြစ် run ရပါမယ် (sudo -i)"; exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 
-# ===== apt guards (unchanged for brevity) =====
+# ===== apt guards =====
 wait_for_apt() {
-  echo -e "${Y}⏳ apt သင့်လျော်မှုကို စောင့်ပါ...${Z}"
+  echo "⏳ apt သင့်လျော်မှုကို စောင့်ပါ..."
   for _ in $(seq 1 60); do
     if pgrep -x apt-get >/dev/null || pgrep -x apt >/dev/null || pgrep -f 'apt.systemd.daily' >/dev/null || pgrep -x unattended-upgrade >/dev/null; then
       sleep 5
@@ -31,7 +30,7 @@ wait_for_apt() {
       return 0
     fi
   done
-  echo -e "${Y}⚠️ apt timers ကို ယာယီရပ်နေပါတယ်${Z}"
+  echo "⚠️ apt timers ကို ယာယီရပ်နေပါတယ်"
   systemctl stop --now unattended-upgrades.service 2>/dev/null || true
   systemctl stop --now apt-daily.service apt-daily.timer 2>/dev/null || true
   systemctl stop --now apt-daily-upgrade.service apt-daily-upgrade.timer 2>/dev/null || true
@@ -44,26 +43,30 @@ apt_guard_start(){
 }
 
 apt_guard_end(){
-  dpkg --configure -a >/dev/null 2>&1 || true
-  apt-get -f install -y >/dev/null 2>&1 || true
+  dpkg --configure -a || true
+  apt-get -f install -y || true
   if [ "${CNF_DISABLED:-0}" = "1" ] && [ -f "${CNF_CONF}.disabled" ]; then mv "${CNF_CONF}.disabled" "$CNF_CONF"; fi
 }
 
-# ===== Packages (unchanged) =====
-echo -e "${Y}📦 Packages တင်နေပါတယ်...${Z}"
+# ===== Packages =====
+echo "📦 Packages တင်နေပါတယ်..."
 apt_guard_start
-apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
-apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates >/dev/null || {
-  apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt >/dev/null || true
-  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates >/dev/null
-}
+apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::=
+apt_install_result=0
+apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates || apt_install_result=$?
+if [ "$apt_install_result" -ne 0 ]; then
+  echo "⚠️ ပထမအကြိမ် Package တင်ခြင်း မအောင်မြင်၍ ပြန်ကြိုးစားပါမည်..."
+  apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt || true
+  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates
+fi
 apt_guard_end
+echo "✅ Packages တင်ပြီးပါပြီ"
 
 # stop old services
 systemctl stop zivpn.service 2>/dev/null || true
 systemctl stop zivpn-web.service 2>/dev/null || true
 
-# ===== Paths and setup directories (unchanged) =====
+# ===== Paths and setup directories =====
 BIN="/usr/local/bin/zivpn"
 CFG="/etc/zivpn/config.json"
 USERS="/etc/zivpn/users.json"
@@ -71,40 +74,38 @@ ENVF="/etc/zivpn/web.env"
 TEMPLATES_DIR="/etc/zivpn/templates" 
 mkdir -p /etc/zivpn "$TEMPLATES_DIR" 
 
-# --- ZIVPN Binary, Config, Certs (UNCHANGED) ---
-echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
+# --- ZIVPN Binary, Config, Certs ---
+echo "⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်..."
 PRIMARY_URL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
 FALLBACK_URL="https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64"
 TMP_BIN="$(mktemp)"
 if ! curl -fsSL -o "$TMP_BIN" "$PRIMARY_URL"; then
-  echo -e "${Y}Primary URL မရ — latest ကို စမ်းပါတယ်...${Z}"
+  echo "Primary URL မရ — latest ကို စမ်းပါတယ်..."
   curl -fSL -o "$TMP_BIN" "$FALLBACK_URL"
 fi
 install -m 0755 "$TMP_BIN" "$BIN"
 rm -f "$TMP_BIN"
+echo "✅ ZIVPN binary ဒေါင်းပြီးပါပြီ"
 
 if [ ! -f "$CFG" ]; then
-  echo -e "${Y}🧩 config.json ဖန်တီးနေပါတယ်...${Z}"
+  echo "🧩 config.json ဖန်တီးနေပါတယ်..."
   curl -fsSL -o "$CFG" "https://raw.githubusercontent.com/zahidbd2/udp-zivpn/main/config.json" || echo '{}' > "$CFG"
 fi
 
 if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
-  echo -e "${Y}🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်...${Z}"
+  echo "🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်..."
   openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
     -subj "/C=MM/ST=Yangon/L=Yangon/O=M-69P/OU=Net/CN=zivpn" \
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
 
-# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (UNCHANGED logic) ---
-echo -e "${G}🔒 Web Admin Login UI ထည့်မလား..?${Z}"
-read -r -p "Web Admin Username (Enter=disable): " WEB_USER
+# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN ---
+echo ""
+read -r -p "🔒 Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
-  # 💡 ပြင်ဆင်ပြီး: -s (silent) ကို ဖျက်လိုက်သဖြင့် Password ရိုက်ထည့်ရင် စာပေါ်မည်။
   read -r -p "Web Admin Password: " WEB_PASS; echo
   
-  # 💡 NEW: Contact Link ကို မေးမြန်းခြင်း
-  echo -e "${G}🔗 Login အောက်နားတွင် ပြသရန် ဆက်သွယ်ရန် Link (Optional)${Z}"
-  read -r -p "Contact Link (ဥပမာ: https://m.me/taknds69 or Enter=disable): " CONTACT_LINK
+  read -r -p "🔗 Contact Link (ဥပမာ: https://m.me/taknds69 or Enter=disable): " CONTACT_LINK
   
   if command -v openssl >/dev/null 2>&1; then
     WEB_SECRET="$(openssl rand -hex 32)"
@@ -118,18 +119,17 @@ PY_SECRET
     echo "WEB_ADMIN_USER=${WEB_USER}"
     echo "WEB_ADMIN_PASSWORD=${WEB_PASS}"
     echo "WEB_SECRET=${WEB_SECRET}"
-    # 💡 NEW: Contact Link ကို web.env ထဲသို့ ထည့်ခြင်း
     echo "WEB_CONTACT_LINK=${CONTACT_LINK:-}" 
   } > "$ENVF"
   chmod 600 "$ENVF"
-  echo -e "${G}✅ Web login UI ဖွင့်ထားပါတယ်${Z}"
+  echo "✅ Web login UI ဖွင့်ထားပါတယ်"
 else
   rm -f "$ENVF" 2>/dev/null || true
-  echo -e "${Y}ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)${Z}"
+  echo "ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)"
 fi
 
-echo -e "${G}🔏 VPN Password List (ကော်မာဖြင့်ခွဲ) eg: M-69P,tak,dtac69${Z}"
-read -r -p "Passwords (Enter=zi): " input_pw
+echo ""
+read -r -p "🔏 VPN Password List (ကော်မာဖြင့်ခွဲ) eg: M-69P,tak,dtac69 (Enter=zi): " input_pw
 if [ -z "${input_pw:-}" ]; then PW_LIST='["zi"]'; else
   PW_LIST=$(echo "$input_pw" | awk -F',' '{
     printf("["); for(i=1;i<=NF;i++){gsub(/^ *| *$/,"",$i); printf("%s\"%s\"", (i>1?",":""), $i)}; printf("]")
@@ -149,8 +149,9 @@ if jq . >/dev/null 2>&1 <<<'{}'; then
 fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
+echo "✅ ZIVPN Config နှင့် User Data ဖန်တီးပြီးပါပြီ"
 
-echo -e "${Y}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${Z}"
+echo "🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်..."
 cat >/etc/systemd/system/zivpn.service <<'EOF'
 [Unit]
 Description=ZIVPN UDP Server
@@ -171,9 +172,182 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 EOF
+echo "✅ zivpn.service ဖန်တီးပြီးပါပြီ"
 
-# 💡 MODIFIED: users_table.html (Added Online Users column and Expires Edit Modal)
-echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
+# ===== USER LIMIT ENFORCEMENT & AUTO-DELETE SCRIPT (UPDATED) =====
+echo "🛡️ User Limit Enforcement Script (Auto-Delete ပါဝင်) ထည့်သွင်းနေပါတယ်..."
+LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
+
+cat > "$LIMIT_ENFORCER_SCRIPT" << 'ENFORCER_EOF'
+#!/bin/bash
+# ZIVPN User Limit Enforcer - Blocks ports when connection count exceeds limit AND DELETES user if over limit
+set -euo pipefail
+
+USERS_FILE="/etc/zivpn/users.json"
+CONFIG_FILE="/etc/zivpn/config.json"
+LOG_FILE="/var/log/zivpn_limit_enforcer.log"
+DELETE_LOG_FILE="/var/log/zivpn_auto_delete.log" 
+
+# Function to get online count for a port (Unique IPs)
+get_online_count() {
+    local port="$1"
+    # Note: Redirecting stderr to /dev/null is often necessary for conntrack on some systems
+    conntrack -L -p udp 2>/dev/null | grep "dport=$port" | awk '{print $5}' | cut -d= -f2 | sort -u | wc -l
+}
+
+# Function to block port using iptables
+block_port() {
+    local port="$1"
+    local user="$2"
+    if ! iptables -C INPUT -p udp --dport "$port" -j DROP -m comment --comment "ZIVPN_BLOCKED_$user" 2>/dev/null; then
+        iptables -I INPUT -p udp --dport "$port" -j DROP -m comment --comment "ZIVPN_BLOCKED_$user"
+        echo "$(date): Rule added for $user (Port $port blocked due to over limit)" >> "$LOG_FILE"
+        return 0 
+    fi
+    return 1
+}
+
+# Function to unblock port
+unblock_port() {
+    local port="$1"
+    local user="$2"
+    while iptables -D INPUT -p udp --dport "$port" -j DROP -m comment --comment "ZIVPN_BLOCKED_$user" 2>/dev/null; do
+        echo "$(date): Rule deleted for $user (Port $port unblocked)" >> "$LOG_FILE"
+    done
+}
+
+# Function to sync users to ZIVPN config and restart service
+sync_and_restart_zivpn() {
+    echo "$(date): Syncing users.json with config.json and restarting zivpn service..." >> "$LOG_FILE"
+    
+    users_data=$(cat "$USERS_FILE")
+    
+    # Extract only valid (non-expired) passwords
+    valid_passwords=$(echo "$users_data" | jq -r '
+        .[] | select(.expires | 
+            if . == null or . == "" then 
+                true 
+            else 
+                (strptime("%Y-%m-%d") | if . >= now | todate | strptime("%Y-%m-%d")) then true else false end
+            end) | 
+        .password' | grep -v 'null')
+        
+    TMP_CONFIG=$(mktemp)
+    
+    if [ -f "$CONFIG_FILE" ]; then
+        jq --argjson pw "$(echo "$valid_passwords" | jq -R . | jq -s .)" '
+            .auth.mode = "passwords" |
+            .auth.config = $pw |
+            .listen = (."listen" // ":5667") |
+            .cert = (."cert" // "/etc/zivpn/zivpn.crt") |
+            .key  = (."key" // "/etc/zivpn/zivpn.key") |
+            .obfs = (."obfs" // "zivpn")
+        ' "$CONFIG_FILE" > "$TMP_CONFIG" && mv "$TMP_CONFIG" "$CONFIG_FILE"
+    else
+        echo "$(date): ERROR: config.json not found! Cannot sync." >> "$LOG_FILE"
+        rm -f "$TMP_CONFIG"
+        return 1
+    fi
+    
+    # Restart the service (Suppress error if zivpn is not fully running yet)
+    systemctl restart zivpn.service 2>/dev/null || true
+    echo "$(date): ZIVPN service restarted." >> "$LOG_FILE"
+}
+
+# Main enforcement logic
+echo "$(date): Starting limit enforcement" >> "$LOG_FILE"
+
+USERS_TO_KEEP_JSON="[]"
+DELETED_USERS=""
+RESTART_REQUIRED=0
+
+if [ -f "$USERS_FILE" ]; then
+    users_data=$(cat "$USERS_FILE")
+    
+    # ----------------------------------------------------
+    # 1. Check Limits & Perform Block/Delete
+    # ----------------------------------------------------
+    
+    USERS_TO_CHECK=$(echo "$users_data" | jq -c '.[]')
+    
+    for user_data in $USERS_TO_CHECK; do
+        username=$(echo "$user_data" | jq -r '.user')
+        port=$(echo "$user_data" | jq -r '.port')
+        limit=$(echo "$user_data" | jq -r '.limit_count // 1')
+        
+        if [ -n "$port" ] && [ "$port" != "null" ]; then
+            online_count=$(get_online_count "$port")
+            
+            # Log the status (This line helps track current usage in the log file)
+            echo "$(date): Status: User $username - Port: $port, Online: $online_count, Limit: $limit" >> "$LOG_FILE"
+            
+            if [ "$online_count" -gt "$limit" ]; then
+                # User is over limit - Block the port and mark for deletion
+                # block_port call will log the rule addition
+                block_port "$port" "$username"
+                
+                # *** AUTO-DELETE LOGIC ***
+                DELETED_USERS="$DELETED_USERS\n- User: $username, Password: $(echo "$user_data" | jq -r '.password'), Port: $port, Over Limit: $online_count > $limit"
+                echo "$(date): AUTO-DELETE initiated for $username (Over Limit: $online_count > $limit). User will be deleted from users.json." >> "$LOG_FILE"
+                RESTART_REQUIRED=1
+                # This user is NOT added to USERS_TO_KEEP_JSON
+                # *** END AUTO-DELETE LOGIC ***
+            else
+                # User is within limit - Unblock and keep
+                # unblock_port call will log rule deletion if it was blocked
+                unblock_port "$port" "$username"
+                USERS_TO_KEEP_JSON=$(echo "$USERS_TO_KEEP_JSON" | jq ". + [$(echo "$user_data" | jq '.|tostring')|fromjson]")
+            fi
+        else
+            # No port assigned - keep the user
+            USERS_TO_KEEP_JSON=$(echo "$USERS_TO_KEEP_JSON" | jq ". + [$(echo "$user_data" | jq '.|tostring')|fromjson]")
+        fi
+    done
+    
+    # ----------------------------------------------------
+    # 2. Finalize Deletion & Restart
+    # ----------------------------------------------------
+    
+    if [ "$RESTART_REQUIRED" -eq 1 ]; then
+        # Write the list of users to keep back to the users file
+        echo "$USERS_TO_KEEP_JSON" | jq '.' > "$USERS_FILE"
+        
+        # Log the deletion event to the dedicated file
+        {
+            echo "========================================================"
+            echo "USER AUTO-DELETED DUE TO OVER LIMIT - $(date)"
+            echo -e "$DELETED_USERS"
+            echo "========================================================"
+        } >> "$DELETE_LOG_FILE"
+        
+        # Sync passwords to config.json and restart zivpn service
+        sync_and_restart_zivpn
+        
+        echo "$(date): Users deleted and ZIVPN service restarted." >> "$LOG_FILE"
+    fi
+fi
+
+echo "$(date): Limit enforcement completed" >> "$LOG_FILE"
+ENFORCER_EOF
+
+chmod +x "$LIMIT_ENFORCER_SCRIPT"
+echo "✅ limit_enforcer.sh script ကို ထည့်သွင်းပြီးပါပြီ"
+
+# ===== CRON JOB FOR LIMIT ENFORCEMENT =====
+echo "⏱️ Limit Enforcement Cron Job ထည့်သွင်းနေပါတယ်..."
+# Remove old cron entry if exists
+crontab -l 2>/dev/null | grep -v "$LIMIT_ENFORCER_SCRIPT" | crontab - 2>/dev/null || true
+# Add new cron entry (run every minute) - Suppress output of cron job itself
+(crontab -l 2>/dev/null; echo "* * * * * $LIMIT_ENFORCER_SCRIPT >/dev/null 2>&1") | crontab -
+echo "✅ Cron Job (တစ်မိနစ်တစ်ခါ) ထည့်သွင်းပြီးပါပြီ"
+
+# ===== CLEAR EXISTING BLOCKING RULES =====
+echo "🧹 လက်ရှိ iptables blocking rules များ ရှင်းလင်းနေပါတယ်..."
+iptables-save | grep -v "ZIVPN_BLOCKED" | iptables-restore 2>/dev/null || true
+echo "✅ Iptables rules များ ရှင်းလင်းပြီးပါပြီ"
+
+# --- TEMPLATE FILES (users_table.html and users_table_wrapper.html) ---
+echo "📄 Web UI Template ဖိုင်များ ဖန်တီးနေပါတယ်..."
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
     <table>
@@ -182,14 +356,15 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             <th><i class="icon">👤</i> User</th>
             <th><i class="icon">🔑</i> Password</th>
             <th><i class="icon">⏰</i> Expires</th>
-            <th><i class="icon">💻</i> Online Users</th> {# 💡 NEW COLUMN #}
+            <th><i class="icon">💻</i> Online Users</th>
+            <th><i class="icon">👥</i> Limit</th>
             <th><i class="icon">🚦</i> Status</th> 
             <th><i class="icon">❌</i> Action</th>
           </tr>
       </thead>
       <tbody>
           {% for u in users %}
-          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% endif %}">
+          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% elif u.is_over_limit %}over-limit{% endif %}">
             <td data-label="User">{% if u.expires and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
             <td data-label="Password">{% if u.expires and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
             <td data-label="Expires">
@@ -202,8 +377,6 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                         {% else %}
                             {{u.expires}}
                         {% endif %}
-                        
-                        {# 💡 Display Days Remaining #}
                         <br><span class="days-remaining">
                             (ကျန်ရှိ: 
                             {% if u.days_remaining is not none %}
@@ -221,11 +394,10 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                 {% else %}
                     <span class="muted">—</span>
                 {% endif %}
-                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> {# 💡 EXPIRES EDIT BUTTON #}
-
+                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> 
             </td>
             
-            <td data-label="Online Users"> {# 💡 NEW ONLINE USERS DATA #}
+            <td data-label="Online Users">
                 {% if u.online_count is not none %}
                     {% if u.online_count > 0 %}
                         <span class="pill pill-online">{{ u.online_count }}</span>
@@ -236,24 +408,36 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
                     <span class="pill pill-unknown">N/A</span>
                 {% endif %}
             </td>
+            
+            <td data-label="Limit">
+                {% if u.limit_count is not none %}
+                    {% if u.limit_count > 1 %}
+                        <span class="pill pill-limit-multi">{{ u.limit_count }}</span>
+                    {% elif u.limit_count == 1 %}
+                        <span class="pill pill-limit-single">{{ u.limit_count }}</span>
+                    {% else %}
+                        <span class="pill pill-limit-default">N/A (Limit: 1)</span>
+                    {% endif %}
+                {% else %}
+                    <span class="pill pill-limit-default">N/A (Limit: 1)</span>
+                {% endif %}
+                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button>
+            </td>
 
             <td data-label="Status">
-                {# Flask's is_expiring_soon() and expiration logic determines the status #}
                 {% if u.expires and u.expires_date < today_date %}
                     <span class="pill pill-expired"><i class="icon">🛑</i> Expired</span>
-                
-                {# Expiring Soon (Today or Tomorrow) #}
                 {% elif u.expiring_soon %}
                     <span class="pill pill-expiring"><i class="icon">⚠️</i> Expiring Soon</span>
-                    
-                {# Active (Including no expiration set, or 2 days or more left) #}
+                {% elif u.is_over_limit %}
+                    <span class="pill pill-over-limit"><i class="icon">❌</i> Over Limit (BLOCKED)</span>
                 {% else %}
                     <span class="pill ok"><i class="icon">🟢</i> Active</span>
                 {% endif %}
             </td>
 
             <td data-label="Action">
-              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.expires }}')"><i class="icon">✏️</i> Pass</button> {# 💡 Password Edit Button #}
+              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.expires }}')"><i class="icon">✏️</i> Pass</button>
               <form class="delform" method="post" action="/delete" onsubmit="return confirm('{{u.user}} ကို ဖျက်မလား?')">
                 <input type="hidden" name="user" value="{{u.user}}">
                 <button type="submit" class="btn-delete"><i class="icon">🗑️</i> Delete</button>
@@ -265,21 +449,19 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     </table>
 </div>
 
-{# 💡 PASSWORD EDIT MODAL (UNCHANGED) #}
+{# MODALS #}
 <div id="editModal" class="modal">
   <div class="modal-content">
     <span class="close-btn" onclick="document.getElementById('editModal').style.display='none'">&times;</span>
     <h2 class="section-title"><i class="icon">✏️</i> Change Password</h2>
     <form method="post" action="/edit">
         <input type="hidden" id="edit-user" name="user">
-        
         <div class="input-group">
             <label for="current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
             <div class="input-field-wrapper is-readonly">
                 <input type="text" id="current-user-display" name="current_user_display" readonly>
             </div>
         </div>
-        
         <div class="input-group">
             <label for="current-password" class="input-label"><i class="icon">🔑</i> Current Password</label>
             <div class="input-field-wrapper is-readonly">
@@ -287,7 +469,6 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             </div>
             <p class="input-hint">လက်ရှိ Password (မပြောင်းလဲလိုပါက ထားခဲ့နိုင်ပါသည်)</p>
         </div>
-        
         <div class="input-group">
             <label for="new-password" class="input-label"><i class="icon">🔒</i> New Password</label>
             <div class="input-field-wrapper">
@@ -295,27 +476,23 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             </div>
             <p class="input-hint">User အတွက် Password အသစ်</p>
         </div>
-        
         <button class="save-btn modal-save-btn" type="submit">Password အသစ် သိမ်းမည်</button>
     </form>
   </div>
 </div>
 
-{# 💡 NEW: EXPIRES EDIT MODAL #}
 <div id="expiresModal" class="modal">
-  <div class="modal-content" style="max-width: 350px;"> {# Slightly wider for date input #}
+  <div class="modal-content">
     <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
     <h2 class="section-title"><i class="icon">⏰</i> Change Expiry Date</h2>
-    <form method="post" action="/edit_expires"> {# NEW ROUTE #}
+    <form method="post" action="/edit_expires">
         <input type="hidden" id="expires-edit-user" name="user">
-        
         <div class="input-group">
             <label for="expires-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
             <div class="input-field-wrapper is-readonly">
                 <input type="text" id="expires-current-user-display" name="current_user_display" readonly>
             </div>
         </div>
-        
         <div class="input-group">
             <label for="new-expires" class="input-label"><i class="icon">🗓️</i> New Expiration Date</label>
             <div class="input-field-wrapper">
@@ -323,49 +500,67 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             </div>
             <p class="input-hint">ရက်စွဲ (YYYY-MM-DD) သို့မဟုတ် ရက်အရေအတွက် (ဥပမာ: 30)</p>
         </div>
-        
         <button class="save-btn modal-save-btn" type="submit">Expires အသစ် သိမ်းမည်</button>
     </form>
   </div>
 </div>
-{# 💡 END NEW EXPIRES EDIT MODAL #}
 
+<div id="limitModal" class="modal">
+  <div class="modal-content">
+    <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
+    <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
+    <form method="post" action="/edit_limit">
+        <input type="hidden" id="limit-edit-user" name="user">
+        <div class="input-group">
+            <label for="limit-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="limit-current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        <div class="input-group">
+            <label for="new-limit" class="input-label"><i class="icon">🔢</i> Max Users</label>
+            <div class="input-field-wrapper">
+                <input type="number" id="new-limit" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1 မှ 10)" min="1" max="10" required>
+            </div>
+            <p class="input-hint">ဤအကောင့်အတွက် အများဆုံး သုံးစွဲသူအရေအတွက် (ပုံမှန်- 1)</p>
+        </div>
+        <button class="save-btn modal-save-btn" type="submit">Limit အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
 
 <style>
-/* 💡 MODAL UI UPDATE START (UNCHANGED) */
+/* Styles remain the same as previous version */
 .modal-content {
-  background-color: var(--card-bg); /* Use card background color */
-  margin: 15% auto; /* နေရာချထားမှု ချိန်ညှိသည် */
+  background-color: var(--card-bg);
+  margin: 15% auto;
   padding: 25px; 
-  border: none; /* Remove default border */
+  border: none;
   width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ */
+  max-width: 320px;
   border-radius: 12px;
   position: relative;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.2); /* Stronger, modern shadow */
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
 }
-/* 💡 CLOSE BUTTON POSITIONING FIX */
 .close-btn { 
   color: var(--secondary); 
-  position: absolute; /* modal-content နှင့် စပ်လျဉ်း၍ နေရာချထားသည် */
-  top: 8px; /* အပေါ်သို့ ရွှေ့သည် */
-  right: 15px; /* ညာဘက်သို့ ရွှေ့သည် */
+  position: absolute;
+  top: 8px;
+  right: 15px;
   font-size: 32px; 
   font-weight: 300; 
-  transition: color 0.2s;
-  line-height: 1; /* စာကြောင်း အကွာအဝေး ချိန်ညှိသည် */
+  line-height: 1;
 }
 .close-btn:hover { color: var(--danger); }
 .section-title { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); color: var(--primary-dark);}
 
-/* Re-use Input Group styles from main HTML, but define specifically for modal for clarity */
 .modal .input-group { margin-bottom: 20px; }
 .modal .input-label {
     display: block;
     text-align: left;
     font-weight: 600;
     color: var(--dark);
-    font-size: 0.9em; /* ညီညာပြီး သေးငယ်စေရန် */
+    font-size: 0.9em;
     margin-bottom: 5px;
 }
 .modal .input-field-wrapper {
@@ -381,7 +576,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25);
 }
 .modal .input-field-wrapper.is-readonly {
-    background-color: var(--light); /* Light gray background for readonly */
+    background-color: var(--light);
     border: 1px solid #ddd;
 }
 .modal .input-field-wrapper input {
@@ -394,21 +589,19 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     background: transparent; 
 }
 
-/* Hint Text */
 .modal .input-hint {
     margin-top: 5px;
     text-align: left;
-    font-size: 0.75em; /* ပိုသေးငယ်စေရန် */
+    font-size: 0.75em;
     color: var(--secondary);
     line-height: 1.4;
     padding-left: 5px;
 }
 
-/* Save Button Design (Using Primary Color) */
 .modal-save-btn {
     width: 100%;
     padding: 12px; 
-    background-color: var(--primary); /* Orange Primary Color */
+    background-color: var(--primary);
     color: white; 
     border: none; 
     border-radius: 8px; 
@@ -417,36 +610,53 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     transition: background-color 0.3s, transform 0.1s; 
     margin-top: 10px; 
     font-weight: bold;
-    box-shadow: 0 4px 6px rgba(255, 127, 39, 0.3); /* Subtle button shadow */
+    box-shadow: 0 4px 6px rgba(255, 127, 39, 0.3);
 }
 .modal-save-btn:hover { background-color: var(--primary-dark); } 
 .modal-save-btn:active { background-color: var(--primary-dark); transform: translateY(1px); box-shadow: 0 2px 4px rgba(255, 127, 39, 0.3); }
 
-/* Button Styles for Action Column */
 .btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
 .btn-edit:hover { background-color: #e0ac08; }
 .delform { display: inline-block; margin: 0; }
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
 .btn-delete:hover { background-color: #c82333; }
 
-/* 💡 NEW BUTTON: Expires Edit Button */
 .btn-edit-expires { 
     background-color: var(--primary); 
     color: white; 
     border: none; 
-    padding: 3px 6px; 
+    padding: 3px 6px;
     border-radius: 4px; 
     cursor: pointer; 
     font-size: 0.75em; 
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
+    display: inline-block; 
+    width: 50px;
+    text-align: center;
 }
 .btn-edit-expires:hover { background-color: var(--primary-dark); }
 
-/* Days Remaining Text Style (UNCHANGED) */
+.btn-edit-limit { 
+    background-color: var(--secondary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px;
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    display: inline-block;
+    width: 50px;
+    text-align: center;
+}
+.btn-edit-limit:hover { background-color: #5a6268; }
+
 .days-remaining {
-    font-size: 0.85em; /* ဥပမာ- 2025-10-24 ထက် အနည်းငယ် သေးငယ်စေရန် */
+    font-size: 0.85em;
     color: var(--secondary);
     font-weight: 500;
     display: inline-block;
@@ -456,53 +666,59 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     font-weight: bold;
 }
 
-/* 💡 NEW PILL STYLES for Online Users */
-.pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
-.pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
-.pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
+.pill-online { background-color: #d4edda; color: #155724; }
+.pill-offline { background-color: #e2e3e5; color: #6c757d; }
+.pill-unknown { background-color: #fff3cd; color: #856404; }
 
+.pill-limit-single { background-color: #007bff; color: white; }
+.pill-limit-multi { background-color: #28a745; color: white; }
+.pill-limit-default { background-color: #e2e3e5; color: #6c757d; }
+.pill-over-limit { background-color: #dc3545; color: white; }
 
 @media (max-width: 768px) {
-    /* 💡 MODIFIED: Column count changed, need to adjust data-label padding */
-    td { padding-left: 50%; } /* Increase padding for more space */
-    td:before { width: 45%; } /* Increase label width */
+    td { padding-left: 50%; }
+    td:before { width: 45%; }
     td[data-label="Action"] { display: flex; justify-content: flex-end; align-items: center; }
     .btn-edit { width: auto; padding: 6px 8px; font-size: 0.8em; margin-right: 5px; }
     .btn-delete { width: auto; padding: 6px 8px; font-size: 0.8em; margin-top: 0; }
     .modal-content { 
         margin: 20% auto; 
-        max-width: 280px; /* 💡 Mobile အတွက် ပိုသေးအောင် လျှော့ချသည်။ */
+        max-width: 280px;
     }
     .days-remaining { display: block; text-align: right; }
-    .btn-edit-expires { display: block; margin-left: auto; }
-
+    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
 }
-/* 💡 MODAL UI UPDATE END */
+
+tr.over-limit { 
+    border-left: 5px solid var(--danger); 
+    background-color: rgba(220, 53, 69, 0.1);
+}
 </style>
 
 <script>
-    // JavaScript to handle the modal display
     function showEditModal(user, password, expires) {
         document.getElementById('edit-user').value = user;
-        document.getElementById('current-user-display').value = user; // Display user
+        document.getElementById('current-user-display').value = user;
         document.getElementById('current-password').value = password;
-        
-        // Clear new password field when opening
         document.getElementById('new-password').value = '';
-        
         document.getElementById('editModal').style.display = 'block';
     }
 
-    // 💡 NEW JAVASCRIPT: Handle Expires Modal Display
     function showExpiresModal(user, expires) {
         document.getElementById('expires-edit-user').value = user;
         document.getElementById('expires-current-user-display').value = user; 
         document.getElementById('new-expires').value = expires;
-        
         document.getElementById('expiresModal').style.display = 'block';
     }
+    
+    function showLimitModal(user, limit) {
+        document.getElementById('limit-edit-user').value = user;
+        document.getElementById('limit-current-user-display').value = user; 
+        document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1;
+        document.getElementById('limitModal').style.display = 'block';
+    }
 
-    // Close modal when clicking outside of it (MODIFIED to check both modals)
     window.onclick = function(event) {
         if (event.target == document.getElementById('editModal')) {
             document.getElementById('editModal').style.display = 'none';
@@ -510,12 +726,13 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
         if (event.target == document.getElementById('expiresModal')) {
             document.getElementById('expiresModal').style.display = 'none';
         }
+        if (event.target == document.getElementById('limitModal')) {
+            document.getElementById('limitModal').style.display = 'none';
+        }
     }
 </script>
 TABLE_HTML
 
-# 💡 Mobile Friendly: users_table_wrapper.html (MODIFIED: style for new column)
-echo -e "${Y}📄 Table Wrapper (users_table_wrapper.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
 <!doctype html>
 <html lang="my"><head><meta charset="utf-8">
@@ -523,26 +740,24 @@ cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="120">
 <style>
-/* Global Styles for Mobile UI */
 :root {
-    --primary: #ff7f27; /* 💡 Color Change: Orange */
-    --primary-dark: #cc661f; /* Darker shade for active/hover state */
+    --primary: #ff7f27;
+    --primary-dark: #cc661f;
     --secondary: #6c757d; --success: #28a745; --danger: #dc3545;
     --light: #f8f9fa; --dark: #343a40; 
     --bg-color: #f0f2f5; 
     --card-bg: #ffffff;
     --border-color: #dee2e6;
-    --warning: #ffc107; /* New: Warning color for expiry */
+    --warning: #ffc107;
     --warning-bg: #fff3cd;
 }
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color);
     line-height: 1.6; color: var(--dark); margin: 0; padding: 0;
-    padding-bottom: 70px; /* Space for fixed bottom navigation */
+    padding-bottom: 70px;
 }
 .icon { font-style: normal; margin-right: 5px; }
 
-/* Header/Logo Only */
 .main-header {
     display: flex; justify-content: space-between; align-items: center;
     background-color: var(--card-bg); padding: 10px 15px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
@@ -551,7 +766,6 @@ body {
 .header-logo a { font-size: 1.6em; font-weight: bold; color: var(--primary); text-decoration: none;}
 .header-logo .highlight { color: var(--dark); }
 
-/* 💡 Mobile Bottom Navigation (New) */
 .bottom-nav {
     display: flex;
     justify-content: space-around;
@@ -590,8 +804,6 @@ body {
     color: var(--primary); 
 }
 
-
-/* Table Styles (Mobile Responsiveness) */
 .table-container { padding: 0 10px; margin: 0 auto; max-width: 100%; } 
 table {
     width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 15px;
@@ -603,13 +815,10 @@ tr:last-child td { border-bottom: none; }
 tr:nth-child(even) { background-color: var(--light); }
 tr:hover { background-color: #e9ecef; }
 
-/* Mobile Table Stacked View (Crucial for mobile friendliness) */
 @media (max-width: 768px) {
     .table-container { padding: 0 5px; }
-    
     table, thead, tbody, th, td, tr { display: block; }
-    thead { display: none; } /* Hide Header on Mobile */
-    
+    thead { display: none; }
     tr { 
         border: 1px solid var(--border-color); 
         margin-bottom: 15px; 
@@ -619,17 +828,16 @@ tr:hover { background-color: #e9ecef; }
     td {
         border: none;
         position: relative;
-        padding-left: 50%; /* 💡 MODIFIED: Increased padding */
+        padding-left: 50%;
         text-align: right;
         border-bottom: 1px dashed #e0e0e0;
     }
     td:last-child { border-bottom: none; }
-    
     td:before {
         content: attr(data-label);
         position: absolute;
         left: 0;
-        width: 45%; /* 💡 MODIFIED: Increased label width */
+        width: 45%;
         padding-left: 10px;
         font-weight: bold;
         text-align: left;
@@ -640,15 +848,15 @@ tr:hover { background-color: #e9ecef; }
     .delform { display: block; text-align: right; }
     .btn-delete { width: 80px; padding: 6px 8px; font-size: 0.8em; margin-top: 5px;}
     .days-remaining { display: block !important; }
+    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
 }
-/* Desktop Navigation Hidden */
 .main-nav { display: none; } 
 @media (min-width: 769px) {
     .bottom-nav { display: none; } 
     body { padding-bottom: 0; }
 }
 
-/* Pill/Status & Buttons */
 .pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 15px; font-size: 0.85em; font-weight: bold; min-width: 90px; justify-content: center;}
 .ok { background-color: #d4edda; color: var(--success); } 
 .bad { background-color: #f8d7da; color: var(--danger); } 
@@ -660,13 +868,15 @@ tr:hover { background-color: #e9ecef; }
 .pill-expiring { background-color: var(--warning-bg); color: var(--warning); } 
 .text-expiring { color: var(--warning); font-weight: bold; } 
 
-/* 💡 NEW PILL STYLES for Online Users */
-.pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
-.pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
-.pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
+.pill-online { background-color: #d4edda; color: #155724; }
+.pill-offline { background-color: #e2e3e5; color: #6c757d; }
+.pill-unknown { background-color: #fff3cd; color: #856404; }
 
+.pill-limit-single { background-color: #007bff; color: white; }
+.pill-limit-multi { background-color: #28a745; color: white; }
+.pill-limit-default { background-color: #e2e3e5; color: #6c757d; }
+.pill-over-limit { background-color: #dc3545; color: white; }
 
-/* Days Remaining Text Style */
 .days-remaining {
     font-size: 0.85em; 
     color: var(--secondary);
@@ -678,14 +888,13 @@ tr:hover { background-color: #e9ecef; }
     font-weight: bold;
 }
 
-
-/* Row Styles for Expiry */
 tr.expired td { opacity: 0.6; text-decoration-color: var(--danger); }
 tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba(255, 193, 7, 0.1); } 
-
+tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220, 53, 69, 0.1); } 
 
 .btn-delete { background-color: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s;}
 .btn-delete:hover { background-color: #c82333; }
+
 .btn-edit-expires { 
     background-color: var(--primary); 
     color: white; 
@@ -697,9 +906,25 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
     transition: background-color 0.2s; 
     margin-left: 5px;
     margin-top: 5px;
+    width: 50px; 
+    text-align: center;
 }
 
-/* 💡 New/Updated styles for Edit Modal (Must be included here for the HTML wrapper) */
+.btn-edit-limit { 
+    background-color: var(--secondary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    width: 50px; 
+    text-align: center;
+}
+
 .modal {
   display: none; 
   position: fixed; 
@@ -710,22 +935,21 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
   background-color: rgba(0,0,0,0.4); 
 }
 .modal-content {
-  background-color: var(--card-bg); /* Use card background color */
-  margin: 15% auto; /* နေရာချထားမှု ချိန်ညှိသည် */
+  background-color: var(--card-bg);
+  margin: 15% auto;
   padding: 25px; 
-  border: none; 
+  border: none;
   width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ */
+  max-width: 320px;
   border-radius: 12px;
   position: relative;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2); 
 }
-/* 💡 CLOSE BUTTON POSITIONING FIX */
 .close-btn { 
   color: var(--secondary); 
   position: absolute; 
-  top: 8px; /* အပေါ်သို့ ရွှေ့သည် */
-  right: 15px; /* ညာဘက်သို့ ရွှေ့သည် */
+  top: 8px;
+  right: 15px;
   font-size: 32px; 
   font-weight: 300;
   line-height: 1;
@@ -733,7 +957,6 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
 .close-btn:hover { color: var(--danger); }
 .btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
 
-/* MODAL UI SPECIFIC STYLES - Duplicated for full self-containment */
 .modal .input-label {
     display: block;
     text-align: left;
@@ -785,8 +1008,6 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
     font-weight: bold;
 }
 .modal-save-btn:hover { background-color: var(--primary-dark); } 
-
-
 </style>
 </head><body>
     
@@ -796,7 +1017,6 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
         </div>
     </header>
     
-{# 💡 users_table_wrapper.html တွင် error message ပြသခြင်း ထပ်ပေါင်းထည့်ရန် #}
 {% if err %}
 <div class="boxa1">
     <div class="err" style="text-align: center;">{{ err }}</div>
@@ -823,8 +1043,8 @@ tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba
 </body></html>
 WRAPPER_HTML
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: conntrack check, prepare_user_data, edit_expires route, LOGIN PASSWORD TYPE)
-echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
+# ===== WEB PANEL (web.py) - NO CHANGE =====
+echo "🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်..."
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
 import json, re, subprocess, os, tempfile, hmac
@@ -846,364 +1066,109 @@ def get_server_ip():
     return "127.0.0.1" 
 
 SERVER_IP_FALLBACK = get_server_ip()
-# 💡 NEW: Contact Link ကို Environment ကနေ ယူခြင်း
 CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link)
+# HTML Template (shortened for brevity - same as previous)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="120">
 <style>
-/* Global Styles */
-:root {
-    --primary: #ff7f27; /* 💡 Color Change: Orange */
-    --primary-dark: #cc661f; /* Darker shade for active/hover state */
-    --secondary: #6c757d; --success: #28a745; --danger: #dc3545;
-    --light: #f8f9fa; --dark: #343a40; --bg-color: #f0f2f5; --card-bg: #ffffff;
-    --border-color: #dee2e6;
-    --warning: #ffc107; 
-}
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color);
-    line-height: 1.6; color: var(--dark); margin: 0; padding: 0;
-    padding-bottom: 70px; 
-}
+:root { --primary: #ff7f27; --primary-dark: #cc661f; --secondary: #6c757d; --success: #28a745; --danger: #dc3545; --light: #f8f9fa; --dark: #343a40; --bg-color: #f0f2f5; --card-bg: #ffffff; --border-color: #dee2e6; --warning: #ffc107; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color); line-height: 1.6; color: var(--dark); margin: 0; padding: 0; padding-bottom: 70px; }
 .icon { font-style: normal; margin-right: 5px; }
-
-/* Header/Logo Only */
-.main-header {
-    display: flex; justify-content: space-between; align-items: center;
-    background-color: var(--card-bg); padding: 10px 15px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-    margin-bottom: 15px; position: sticky; top: 0; z-index: 1000;
-}
+.main-header { display: flex; justify-content: space-between; align-items: center; background-color: var(--card-bg); padding: 10px 15px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); margin-bottom: 15px; position: sticky; top: 0; z-index: 1000; }
 .header-logo a { font-size: 1.6em; font-weight: bold; color: var(--primary); text-decoration: none;} 
 .header-logo .highlight { color: var(--dark); }
-
-/* 💡 Mobile Bottom Navigation */
-.bottom-nav {
-    display: flex;
-    justify-content: space-around;
-    align-items: center;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    background-color: var(--card-bg);
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-    z-index: 1000;
-    padding: 5px 0;
-}
-.bottom-nav a {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-decoration: none;
-    color: var(--secondary);
-    font-size: 0.75em;
-    padding: 8px;
-    border-radius: 6px;
-    transition: color 0.2s, background-color 0.2s;
-    min-width: 80px;
-}
-.bottom-nav a:hover, .bottom-nav a.active {
-    color: var(--primary); 
-}
-.bottom-nav a i.icon {
-    font-size: 1.2em;
-    margin-right: 0;
-    margin-bottom: 3px;
-    color: #ffd966; 
-}
-.bottom-nav a:hover i.icon, .bottom-nav a.active i.icon {
-    color: var(--primary); 
-}
-@media (min-width: 769px) {
-    .bottom-nav { display: none; }
-    body { padding-bottom: 0; }
-}
-
-/* Login/Form Styles - Enhanced UI */
-.login-container, .boxa1 {
-    background-color: var(--card-bg); 
-    padding: 30px 20px; 
-    border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15); 
-    width: 90%; max-width: 400px;
-    margin: 30px auto;
-    text-align: center;
-}
-.boxa1 {
-    max-width: 600px;
-    margin-top: 15px;
-    text-align: left;
-}
-
-
-/* New: Info Card for total users */
-.info-card {
-    background-color: #fcece3; 
-    color: var(--primary-dark);
-    padding: 15px 20px;
-    border-radius: 8px;
-    text-align: center;
-    font-weight: bold;
-    font-size: 1.0em; 
-    margin-bottom: 15px;
-    border: 1px solid var(--primary);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-/* 💡 ပြင်ဆင်ချက်: စုစုပေါင်းအရေအရေအတွက် (Total Users) ကို စာလုံးသေးပေးလိုက်သည် */
-.info-card span {
-    font-size: 1.1em; 
-    margin-right: 5px;
-}
-
-.profile-image-container {
-    display: inline-block; margin-bottom: 15px; border-radius: 50%;
-    overflow: hidden; border: 4px solid var(--primary); 
-}
+.bottom-nav { display: flex; justify-content: space-around; align-items: center; position: fixed; bottom: 0; left: 0; width: 100%; background-color: var(--card-bg); box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1); z-index: 1000; padding: 5px 0; }
+.bottom-nav a { display: flex; flex-direction: column; align-items: center; text-decoration: none; color: var(--secondary); font-size: 0.75em; padding: 8px; border-radius: 6px; transition: color 0.2s, background-color 0.2s; min-width: 80px; }
+.bottom-nav a:hover, .bottom-nav a.active { color: var(--primary); }
+.bottom-nav a i.icon { font-size: 1.2em; margin-right: 0; margin-bottom: 3px; color: #ffd966; }
+.bottom-nav a:hover i.icon, .bottom-nav a.active i.icon { color: var(--primary); }
+@media (min-width: 769px) { .bottom-nav { display: none; } body { padding-bottom: 0; } }
+.login-container, .boxa1 { background-color: var(--card-bg); padding: 30px 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15); width: 90%; max-width: 400px; margin: 30px auto; text-align: center; }
+.boxa1 { max-width: 600px; margin-top: 15px; text-align: left; }
+.info-card { background-color: #fcece3; color: var(--primary-dark); padding: 15px 20px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 1.0em; margin-bottom: 15px; border: 1px solid var(--primary); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+.info-card span { font-size: 1.1em; margin-right: 5px; }
+.profile-image-container { display: inline-block; margin-bottom: 15px; border-radius: 50%; overflow: hidden; border: 4px solid var(--primary); }
 .profile-image { width: 70px; height: 70px; object-fit: cover; display: block; }
 h1 { font-size: 22px; color: var(--dark); margin-bottom: 5px; }
 .panel-title { font-size: 14px; color: var(--secondary); margin-bottom: 25px; }
-/* 💡 New: Login IP Display Style */
-.login-ip-display {
-    font-size: 16px;
-    color: var(--primary-dark);
-    font-weight: bold;
-    margin-top: -15px; 
-    margin-bottom: 25px; 
-}
-
-/* Input Fields with Icons/Design */
-.input-group { 
-    margin-bottom: 15px; 
-    text-align: left;
-}
-.input-field-wrapper {
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    margin-Top: 5px; 
-    background-color: #fff;
-    transition: border-color 0.3s, box-shadow 0.3s;
-}
-.input-field-wrapper:focus-within {
-    border-color: var(--primary); 
-    box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25); 
-}
-.input-field-wrapper .icon {
-    padding: 0 10px;
-    color: var(--secondary);
-    background: transparent; 
-}
-input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"] {
-    width: 100%;
-    padding: 12px 10px;
-    border: none; 
-    border-radius: 0 8px 8px 0;
-    font-size: 16px;
-    outline: none;
-    background: transparent; 
-    appearance: none; 
-    -webkit-appearance: none;
-}
-input[name="ip"] {
-    background-color: var(--light);
-    color: var(--secondary);
-    cursor: pointer; 
-}
-/* 💡 Button Color and Hover/Active State */
-.login-button, .save-btn {
-    width: 100%; padding: 12px; 
-    background-color: var(--primary); 
-    color: white; border: none; border-radius: 8px; font-size: 16px;
-    cursor: pointer; transition: background-color 0.3s; margin-top: 20px; font-weight: bold;
-}
+.login-ip-display { font-size: 16px; color: var(--primary-dark); font-weight: bold; margin-top: -15px; margin-bottom: 25px; }
+.input-group { margin-bottom: 15px; text-align: left; }
+.input-field-wrapper { display: flex; align-items: center; border: 1px solid var(--border-color); border-radius: 8px; margin-Top: 5px; background-color: #fff; transition: border-color 0.3s, box-shadow 0.3s; }
+.input-field-wrapper:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25); }
+.input-field-wrapper .icon { padding: 0 10px; color: var(--secondary); background: transparent; }
+input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"], input[type="number"] { width: 100%; padding: 12px 10px; border: none; border-radius: 0 8px 8px 0; font-size: 16px; outline: none; background: transparent; appearance: none; -webkit-appearance: none; }
+input[name="ip"] { background-color: var(--light); color: var(--secondary); cursor: pointer; }
+.login-button, .save-btn { width: 100%; padding: 12px; background-color: var(--primary); color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.3s; margin-top: 20px; font-weight: bold; }
 .login-button:hover, .save-btn:hover { background-color: var(--primary-dark); } 
 .login-button:active, .save-btn:active { background-color: var(--primary-dark); transform: translateY(1px); } 
-
-
 .section-title { font-size: 18px; font-weight: bold; color: var(--dark); margin-bottom: 15px; }
 .row{display:flex;gap:15px;flex-wrap:wrap;margin-bottom: 5px;}
 .row>div{flex:1 1 100%;}
-@media (min-width: 600px) {
-    .row>div{flex:1 1 220px;}
-}
-/* 💡 Error Message Style (For Login) */
-.err{
-    color: var(--danger); 
-    background-color: #f8d7da;
-    border: 1px solid #f5c6cb;
-    padding: 10px;
-    border-radius: 8px;
-    margin-bottom: 15px; 
-    font-weight: bold;
-    text-align: center;
-}
-
-.user-info-card {
-    position: fixed; 
-    top: 20px; 
-    left: 50%; 
-    transform: translateX(-50%); 
-    
-    background-color: #d4edda;
-    color: #155724; 
-    border: 1px solid #c3e6cb; 
-    border-radius: 8px;
-    padding: 15px 20px; 
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    z-index: 2000; 
-    max-width: 300px; 
-    width: 90%; 
-    text-align: left;
-}
-
-
-@keyframes fadein {
-    from { opacity: 0; transform: translateY(-20px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fadeout {
-    from { opacity: 1; }
-    to { opacity: 0; visibility: hidden; }
-}
-/* New: Copy Success Message Style */
-#copy-notification {
-    position: fixed; top: 10px; right: 50%; transform: translateX(50%);
-    background-color: var(--success); color: white; padding: 8px 15px;
-    border-radius: 5px; z-index: 2000; font-size: 0.9em;
-    opacity: 0; transition: opacity 0.5s;
-}
-
-text {
-  
-  font-size: 15px;
-  margin-Top: 0px;
-}
-/* 💡 NEW: Contact Link Style */
-.contact-link {
-    margin-top: 15px;
-    font-size: 0.9em;
-    font-weight: 500;
-}
-.contact-link a {
-    color: var(--primary-dark);
-    text-decoration: none;
-    font-weight: bold;
-    transition: color 0.2s;
-}
-.contact-link a:hover {
-    color: var(--primary);
-    text-decoration: underline;
-}
-
+@media (min-width: 600px) { .row>div{flex:1 1 220px;} }
+.err{ color: var(--danger); background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; text-align: center; }
+.user-info-card { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 8px; padding: 15px 20px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); z-index: 2000; max-width: 300px; width: 90%; text-align: left; }
+@keyframes fadein { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeout { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
+#copy-notification { position: fixed; top: 10px; right: 50%; transform: translateX(50%); background-color: var(--success); color: white; padding: 8px 15px; border-radius: 5px; z-index: 2000; font-size: 0.9em; opacity: 0; transition: opacity 0.5s; }
+text { font-size: 15px; margin-Top: 0px; }
+.contact-link { margin-top: 15px; font-size: 0.9em; font-weight: 500; }
+.contact-link a { color: var(--primary-dark); text-decoration: none; font-weight: bold; transition: color 0.2s; }
+.contact-link a:hover { color: var(--primary); text-decoration: underline; }
 </style>
 <script>
-    // 💡 ULTIMATE FIX: JavaScript function for copy-to-clipboard with Fallback (Re-applied)
     function copyToClipboard(elementId) {
         const copyText = document.getElementById(elementId);
         if (!copyText) return;
-        
         const notification = document.getElementById('copy-notification');
         const showNotification = () => {
             notification.innerText = 'Server IP ကို ကူးပြီးပါပြီ';
             notification.style.opacity = 1;
-            setTimeout(() => {
-                notification.style.opacity = 0;
-            }, 2000);
+            setTimeout(() => { notification.style.opacity = 0; }, 2000);
         };
-        
-        // 1. New Clipboard API (Requires HTTPS or localhost)
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(copyText.value).then(showNotification).catch(err => {
-                // If New API fails (e.g., due to HTTP), fall back
-                fallbackCopy(copyText, showNotification);
-            });
-        } else {
-            // 2. Fallback using execCommand (Works better on HTTP/older browsers)
-            fallbackCopy(copyText, showNotification);
-        }
+            navigator.clipboard.writeText(copyText.value).then(showNotification).catch(err => { fallbackCopy(copyText, showNotification); });
+        } else { fallbackCopy(copyText, showNotification); }
     }
-
     function fallbackCopy(copyText, onSuccess) {
         let isCopied = false;
         try {
-            // Select the text field
             copyText.select();
-            // For mobile devices: ensure the selection range covers all text
             copyText.setSelectionRange(0, 99999); 
-            
-            // Copy the text inside the text field
             isCopied = document.execCommand('copy');
-
-            if (isCopied) {
-                onSuccess();
-            } else {
-                console.error('Copy failed using execCommand');
-            }
-        } catch (err) {
-            console.error('Fallback copy failed: ', err);
-        }
+            if (isCopied) { onSuccess(); }
+        } catch (err) { console.error('Fallback copy failed: ', err); }
     }
 </script>
-
 </head><body>
-
 {% if not authed %}
     <div class="login-container">
-        <div class="profile-image-container">
-            <img src="{{logo}}" alt="Profile" class="profile-image">
-        </div>
-        <h1>ZIVPN Panel</h1>
-        <br>
-        {% if IP %}
-        <p class="login-ip-display">Server IP: {{ IP }}</p>
-        {% endif %}
-        
+        <div class="profile-image-container"><img src="{{logo}}" alt="Profile" class="profile-image"></div>
+        <h1>ZIVPN Panel</h1><br>
+        {% if IP %}<p class="login-ip-display">Server IP: {{ IP }}</p>{% endif %}
         <p class="panel-title">Login to Admin Dashboard</p>
-        
-        {% if err %}<div class="err">{{err}}</div>{% endif %} <form action="/login" method="POST" class="login-form">
+        {% if err %}<div class="err">{{err}}</div>{% endif %} 
+        <form action="/login" method="POST" class="login-form">
             <div class="input-group">
                 <label for="username" style="display:none;">Username</label>
-                <div class="input-field-wrapper">
-                    <i class="icon">🔑</i>
-                    <input type="text" id="username" name="u" placeholder="Username" required>
-                </div>
+                <div class="input-field-wrapper"><i class="icon">🔑</i><input type="text" id="username" name="u" placeholder="Username" required></div>
             </div>
             <div class="input-group">
                 <label for="password" style="display:none;">Password</label>
-                <div class="input-field-wrapper">
-                    <i class="icon">🔒</i>
-                    {# 💡 FIX: Change type="password" to type="text" to display password #}
-                    <input type="text" id="password" name="p" placeholder="Password" required> 
-                </div>
+                <div class="input-field-wrapper"><i class="icon">🔒</i><input type="text" id="password" name="p" placeholder="Password" required></div>
             </div>
             <button type="submit" class="login-button">Login</button>
         </form>
-        
-        {# 💡 NEW: Contact Link ကို ဒီမှာ ထည့်သွင်းပြသခြင်း #}
-        {% if contact_link %}
-        <p class="contact-link"><i class="icon">🗨️</i><a href="{{ contact_link }}" target="_blank">Admin ကို ဆက်သွယ်ပါ</a></p>
-        {% endif %}
+        {% if contact_link %}<p class="contact-link"><i class="icon">🗨️</i><a href="{{ contact_link }}" target="_blank">Admin ကို ဆက်သွယ်ပါ</a></p>{% endif %}
     </div>
 {% else %}
-
-   <header class="main-header">
-        <div class="header-logo">
-            <a href="/">ZIVPN<span class="highlight"> Panel</span></a>
-        </div>
-    </header>
-    
-    <div id="copy-notification"></div> <div class="boxa1">
-        <div class="info-card">
-            <i class="icon">💡</i> လက်ရှိ Member User စုစုပေါင်း<br><span>{{ total_users }}</span>ယောက်
-        </div>
-        
+   <header class="main-header"><div class="header-logo"><a href="/">ZIVPN<span class="highlight"> Panel</span></a></div></header>
+   <div id="copy-notification"></div> 
+   <div class="boxa1">
+        <div class="info-card"><i class="icon">💡</i> လက်ရှိ Member User စုစုပေါင်း<br><span>{{ total_users }}</span>ယောက်</div>
     <script>
         {% if msg and '{' in msg and '}' in msg %}
         try {
@@ -1211,94 +1176,55 @@ text {
             if (data.user) { 
                 const card = document.createElement('div');
                 card.className = 'user-info-card';
-                // Check if the message is from /edit or /edit_expires route
                 if (data.message) {
                     card.innerHTML = data.message;
                 } else {
-                    // Message from /add route
                     card.innerHTML = `
                         <h4>✅ အကောင့်အသစ် ဖန်တီးပြီးပါပြီ</h4>
                         <p><i class="icon">🔥</i> Server IP: <b>${data.ip || '{{ IP }}'}</b></p>  
                         <p><i class="icon">👤</i> Username: <b>${data.user}</b></p>
                         <p><i class="icon">🔑</i> Password: <b>${data.password}</b></p>
-                        <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>                   
+                        <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>
+                        <p><i class="icon">👥</i> Limit: <b>${data.limit_count || '1'}</b></p>
                     `;
                 }
-                
                 document.body.appendChild(card);
-                
-                setTimeout(() => {
-                    if (card.parentNode) {
-                        card.parentNode.removeChild(card);
-                    }
-                }, 20000); 
+                setTimeout(() => { if (card.parentNode) { card.parentNode.removeChild(card); } }, 20000); 
             }
-        } catch (e) {
-            console.error("Error parsing message JSON:", e);
-        }
+        } catch (e) { console.error("Error parsing message JSON:", e); }
         {% endif %}
     </script>
-
-
     <form method="post" action="/add" class="">
         <h2 class="section-title"><i class="icon">➕</i> Add new user</h2>
         {% if err %}<div class="err">{{err}}</div>{% endif %}
-  
         <div class="input-group">
             <label for="username" style="display:none;">Username</label>
-            <div class="input-field-wrapper">
-                <i class="icon">👤</i>
-                <input type="text" id="username" name="user" placeholder="Username" required>
-            </div>
+            <div class="input-field-wrapper"><i class="icon">👤</i><input type="text" id="username" name="user" placeholder="Username" required></div>
         </div>
         <div class="input-group">
             <label for="password" style="display:none;">Password</label>
-            <div class="input-field-wrapper">
-                <i class="icon">🔑</i>
-                <input type="password" id="password" name="password" placeholder="Password" required>
-            </div>
+            <div class="input-field-wrapper"><i class="icon">🔑</i><input type="password" id="password" name="password" placeholder="Password" required></div>
         </div>
         <div class="row">
-            <div>
-            <text> <label><i class="icon"></i>Add (expiration date)</label></text>
-            <tak1>  <div class="input-field-wrapper">
-                <i class="icon">🗓️</i>
-                <input name="expires" required placeholder="Example : 2025-12-31 or 30">
-            </div></tak1>
-            </div>
+            <div><text> <label><i class="icon"></i>Add (expiration date)</label></text><tak1>  <div class="input-field-wrapper"><i class="icon">🗓️</i><input name="expires" required placeholder="Example : 2025-12-31 or 30"></div></tak1></div>
+            <div><text> <label><i class="icon"></i>User Limit Count</label></text><div class="input-field-wrapper"><i class="icon">👥</i><input type="number" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1-10)" min="1" max="10" value="1" required></div></div>
         </div>
         <div class="input-group">
             <label><i class="icon"></i>Server IP (Click to Copy)</label> 
-            <div class="input-field-wrapper">
-                <i class="icon">📡</i>
-                <input name="ip" id="server-ip-input" placeholder="ip" value="{{ IP }}" readonly onclick="copyToClipboard('server-ip-input')">
-            </div>
+            <div class="input-field-wrapper"><i class="icon">📡</i><input name="ip" id="server-ip-input" placeholder="ip" value="{{ IP }}" readonly onclick="copyToClipboard('server-ip-input')"></div>
         </div>
-
         <button class="save-btn" type="submit">Create Account</button>
     </form>
-    </div> <nav class="bottom-nav">
-        <a href="/">
-            <i class="icon">➕</i>
-            <span>အကောင့်ထည့်ရန်</span>
-        </a>
-        <a href="/users">
-            <i class="icon">📜</i>
-            <span>အသုံးပြုသူ စာရင်း</span>
-        </a>
-        <a href="/logout">
-            <i class="icon">➡️</i>
-            <span>ထွက်ရန်</span>
-        </a>
+    </div> 
+    <nav class="bottom-nav">
+        <a href="/"><i class="icon">➕</i><span>အကောင့်ထည့်ရန်</span></a>
+        <a href="/users"><i class="icon">📜</i><span>အသုံးပြုသူ စာရင်း</span></a>
+        <a href="/logout"><i class="icon">➡️</i><span>ထွက်ရန်</span></a>
     </nav>
-
-
 {% endif %}
 </body></html>"""
 
 app = Flask(__name__, template_folder="/etc/zivpn/templates")
-
-# Secret & Admin credentials (via env)
 app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
 ADMIN_USER = os.environ.get("WEB_ADMIN_USER","M-69P").strip()
 ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","M-69P").strip()
@@ -1325,7 +1251,9 @@ def load_users():
     out.append({"user":u.get("user",""),
                 "password":u.get("password",""),
                 "expires":u.get("expires",""),
-                "port":str(u.get("port","")) if u.get("port","")!="" else ""})
+                "port":str(u.get("port","")) if u.get("port","")!="" else "",
+                "limit_count": int(u.get("limit_count", 1))
+                })
   return out
 def save_users(users): write_json_atomic(USERS_FILE, users)
 def get_listen_port_from_config():
@@ -1345,50 +1273,37 @@ def pick_free_port():
 def has_recent_udp_activity(port):
   if not port: return False
   try:
-    # Check for recent conntrack entries for the specific port
     out=subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
                        shell=True, capture_output=True, text=True).stdout
     return bool(out)
   except Exception:
     return False
 
-# 💡 NEW FUNCTION: Get the number of unique source IPs connected to a user's port
 def get_user_online_count(port):
     if not port: return 0
     try:
-        # Get conntrack entries for the specific port
+        # Use conntrack to find connections and count unique source IPs (excluding server's IP)
         result = subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
                                 shell=True, capture_output=True, text=True).stdout
-        
-        # Regex to find the source IP (src=...) from the conntrack output line
-        # Example output: udp 17 29 src=1.2.3.4 dst=5.6.7.8 sport=5000 dport=6001 [UNREPLIED] src=5.6.7.8 dst=1.2.3.4 sport=6001 dport=5000 [ASSURED] mark=0 zone=0 use=1
-        # The first 'src=' is the client's source IP
         source_ips = re.findall(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', result)
-        
-        # Count unique IPs that are NOT the server's own IP (to avoid counting NAT loopback or internal communication)
-        server_ip_list = SERVER_IP_FALLBACK.split() # In case it returns multiple IPs
-        unique_online_ips = set(ip for ip in source_ips if ip not in server_ip_list)
-
+        unique_online_ips = set(ip for ip in source_ips if ip != SERVER_IP_FALLBACK)
         return len(unique_online_ips)
     except Exception:
         return 0
     
-# Function to get the count of non-expired users
 def get_total_active_users():
     users = load_users()
-    today_date = date.today() # 💡 Use date.today()
+    today_date = date.today()
     active_count = 0
     for user in users:
         expires_str = user.get("expires")
         is_expired = False
         if expires_str:
             try:
-                # 💡 FIX: Expires date is strictly less than today's date
                 if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                     is_expired = True
             except ValueError:
                 is_expired = False
-        
         if not is_expired:
             active_count += 1
     return active_count
@@ -1397,26 +1312,20 @@ def is_expiring_soon(expires_str):
     if not expires_str: return False
     try:
         expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
-        today = date.today() # 💡 Use date.today()
+        today = date.today()
         remaining_days = (expires_date - today).days
-        
-        # 💡 FIX: Yellow pill if it expires on Today or Tomorrow (0 or 1 days left). Expiration day is the LAST valid day.
-        # remaining_days = 0 means it expires TODAY (23:59:59)
-        # remaining_days = 1 means it expires TOMORROW
         return 0 <= remaining_days <= 1
     except ValueError:
         return False
     
-# 💡 NEW FUNCTION: Calculate days remaining
 def calculate_days_remaining(expires_str):
     if not expires_str:
         return None
     try:
         expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
         today = date.today()
-        # The expiration day is the last valid day, so we want to count how many days *including* today
-        # up to the expiration date. 
         remaining = (expires_date - today).days
+        # Only show remaining days if it's today or in the future
         return remaining if remaining >= 0 else None
     except ValueError:
         return None
@@ -1427,10 +1336,9 @@ def delete_user(user):
     save_users(remaining_users)
     sync_config_passwords(mode="mirror")
     
-# 💡 DELETION LOGIC (Standard): Deletes users whose expiration date is before today (at 00:00:00 of the following day)
 def check_user_expiration():
     users = load_users()
-    today_date = date.today() # 💡 Use date.today()
+    today_date = date.today()
     users_to_keep = []
     deleted_count = 0
     
@@ -1439,13 +1347,11 @@ def check_user_expiration():
         is_expired = False
         if expires_str:
             try:
-                # 💡 FIX: Delete if expiration date is strictly before today's date
-                # If expires='2025-10-23', it is deleted only on 2025-10-24 (since 2025-10-23 < 2025-10-24 is FALSE)
                 if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                     is_expired = True
             except ValueError:
                 pass 
-
+        # Only keep non-expired users
         if is_expired:
             deleted_count += 1
         else:
@@ -1456,23 +1362,22 @@ def check_user_expiration():
         sync_config_passwords(mode="mirror") 
         return True 
     return False 
+
 def sync_config_passwords(mode="mirror"):
   cfg=read_json(CONFIG_FILE,{})
   users=load_users()
   
-  today_date = date.today() # 💡 Use date.today()
+  today_date = date.today()
   valid_passwords = set()
   for u in users:
       expires_str = u.get("expires")
       is_valid = True
       if expires_str:
           try:
-              # 💡 FIX: Expiration check for VPN Passwords
               if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                   is_valid = False
           except ValueError:
               is_valid = True 
-
       if is_valid and u.get("password"):
           valid_passwords.add(str(u["password"]))
 
@@ -1495,16 +1400,20 @@ def sync_config_passwords(mode="mirror"):
   cfg["obfs"]=cfg.get("obfs") or "zivpn"
   write_json_atomic(CONFIG_FILE,cfg)
   subprocess.run("systemctl restart zivpn.service", shell=True)
+
 def login_enabled(): return bool(ADMIN_USER and ADMIN_PASS)
 def is_authed(): return session.get("auth") == True
 def require_login():
   if login_enabled() and not is_authed():
+    # If login is required but not authenticated, redirect to login
     return False
   return True
+
 def prepare_user_data():
     all_users = load_users()
+    # Check expiration and delete expired users before calculating online status
     check_user_expiration() 
-    users = load_users() # Reload after expiration check
+    users = load_users()
     view=[]
     today_date = date.today()
     for u in users:
@@ -1512,15 +1421,22 @@ def prepare_user_data():
       if u.get("expires"):
           try: expires_date_obj = datetime.strptime(u.get("expires"), "%Y-%m-%d").date()
           except ValueError: pass
+      
+      # Use online count helper
+      online_count = get_user_online_count(u.get("port",""))
+      limit_count = int(u.get("limit_count", 1))
+      is_over_limit = online_count > limit_count
           
       view.append(type("U",(),{
         "user":u.get("user",""),
         "password":u.get("password",""),
         "expires":u.get("expires",""),
-        "expires_date": expires_date_obj, # 💡 New field for comparison
-        "days_remaining": calculate_days_remaining(u.get("expires","")), # 💡 New field for display
+        "expires_date": expires_date_obj,
+        "days_remaining": calculate_days_remaining(u.get("expires","")),
         "port":u.get("port",""),
-        "online_count": get_user_online_count(u.get("port","")), # 💡 NEW: Online Count
+        "online_count": online_count,
+        "limit_count": limit_count,
+        "is_over_limit": is_over_limit,
         "expiring_soon": is_expiring_soon(u.get("expires","")) 
       }))
     view.sort(key=lambda x:(x.user or "").lower())
@@ -1537,9 +1453,9 @@ def index():
                                 logo=LOGO_URL, 
                                 err=session.pop("login_err", None),
                                 IP=server_ip,
-                                contact_link=CONTACT_LINK) # 💡 Added Contact Link
+                                contact_link=CONTACT_LINK)
     
-    # Run expiration check and get the total count
+    # Run expiration check to clean up old users when accessing the panel
     check_user_expiration()
     total_users = get_total_active_users()
 
@@ -1556,20 +1472,19 @@ def index():
 def users_table_view():
     if not require_login(): return redirect(url_for('login'))
     
-    view, today_str, today_date = prepare_user_data() # 💡 Get today_date object
+    view, today_str, today_date = prepare_user_data()
     
     msg_data = session.pop("msg", None)
-    err_data = session.pop("err", None) # 💡 Get the error data
+    err_data = session.pop("err", None)
 
     return render_template("users_table_wrapper.html", 
                            users=view, 
-                           today=today_str, # Passed as string for compatibility (though not used in table)
-                           today_date=today_date, # 💡 Passed as object for comparison in template
+                           today=today_str,
+                           today_date=today_date,
                            logo=LOGO_URL, 
                            IP=SERVER_IP_FALLBACK,
                            msg=msg_data, 
-                           err=err_data) # 💡 Pass the error data to the template
-
+                           err=err_data)
 
 @app.route("/login", methods=["GET","POST"])
 def login():
@@ -1585,13 +1500,12 @@ def login():
       session["auth"]=False
       session["login_err"]="❌ Username သို့မဟုတ် Password မှားယွင်းနေပါသည်။ ထပ်မံစစ်ဆေးပါ။" 
       return redirect(url_for('login'))
-  # GET
   return render_template_string(HTML, 
                                 authed=False, 
                                 logo=LOGO_URL, 
                                 err=session.pop("login_err", None), 
                                 IP=SERVER_IP_FALLBACK,
-                                contact_link=CONTACT_LINK) # 💡 Added Contact Link
+                                contact_link=CONTACT_LINK)
 
 @app.route("/logout", methods=["GET"])
 def logout():
@@ -1604,15 +1518,23 @@ def add_user():
   user=(request.form.get("user") or "").strip()
   password=(request.form.get("password") or "").strip()
   expires=(request.form.get("expires") or "").strip()
+  limit_count_str=(request.form.get("limit_count") or "1").strip()
   port=(request.form.get("port") or "").strip() 
   ip = (request.form.get("ip") or "").strip() or SERVER_IP_FALLBACK
+  
+  try:
+    limit_count = int(limit_count_str)
+    if not (1 <= limit_count <= 10):
+        session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
+        return redirect(url_for('index'))
+  except ValueError:
+    session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
+    return redirect(url_for('index'))
 
-  # 💡 NEW FIX: Myanmar Unicode Check (Myanmar Unicode Range U+1000 to U+109F)
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
   if myanmar_chars_pattern.search(user) or myanmar_chars_pattern.search(password):
       session["err"] = "❌ User Name သို့မဟုတ် Password တွင် မြန်မာစာလုံးများ ပါဝင်၍ မရပါ။ (English, Numbers သာ ခွင့်ပြုသည်)"
       return redirect(url_for('index'))
-  # 💡 END NEW FIX
 
   if expires.isdigit():
     expires=(datetime.now() + timedelta(days=int(expires))).strftime("%Y-%m-%d")
@@ -1634,16 +1556,14 @@ def add_user():
   users=load_users(); replaced=False
   for u in users:
     if u.get("user","").lower()==user.lower():
-      u["password"]=password; u["expires"]=expires; u["port"]=port; replaced=True; break
+      u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break
   if not replaced:
-    # 💡 NEW FIX: Pick a free port if not provided (Important for conntrack tracking)
     if not port:
         port = pick_free_port()
         if not port:
             session["err"] = "❌ အသုံးပြုရန် Port မရှိတော့ပါ"
             return redirect(url_for('index'))
-            
-    users.append({"user":user,"password":password,"expires":expires,"port":port})
+    users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count})
   
   save_users(users)
   sync_config_passwords()
@@ -1652,13 +1572,13 @@ def add_user():
       "user": user,
       "password": password,
       "expires": expires,
-      "ip": ip 
+      "ip": ip,
+      "limit_count": limit_count
   }
   
   session["msg"] = json.dumps(msg_dict)
   return redirect(url_for('index'))
 
-# 💡 NEW ROUTE: Edit Expiration Date
 @app.route("/edit_expires", methods=["POST"])
 def edit_user_expires():
   if not require_login(): return redirect(url_for('login'))
@@ -1669,11 +1589,9 @@ def edit_user_expires():
     session["err"] = "User Name နှင့် Expiration Date အသစ် မပါဝင်ပါ"
     return redirect(url_for('users_table_view'))
   
-  # Convert days to date if a number is provided
   if new_expires.isdigit():
     new_expires=(datetime.now() + timedelta(days=int(new_expires))).strftime("%Y-%m-%d")
 
-  # Validate the date format
   if new_expires:
     try: 
         datetime.strptime(new_expires,"%Y-%m-%d")
@@ -1697,9 +1615,43 @@ def edit_user_expires():
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Expires ကို **{new_expires}** သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
-# 💡 END NEW ROUTE
 
-# 💡 EXISTING ROUTE: Password Edit Function (MODIFIED for Myanmar Char Check)
+@app.route("/edit_limit", methods=["POST"])
+def edit_user_limit():
+  if not require_login(): return redirect(url_for('login'))
+  user=(request.form.get("user") or "").strip()
+  limit_count_str=(request.form.get("limit_count") or "").strip()
+  
+  if not user or not limit_count_str:
+    session["err"] = "User Name နှင့် Limit Count အသစ် မပါဝင်ပါ"
+    return redirect(url_for('users_table_view'))
+  
+  try:
+    new_limit = int(limit_count_str)
+    if not (1 <= new_limit <= 10):
+        session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
+        return redirect(url_for('users_table_view'))
+  except ValueError:
+    session["err"] = "❌ Limit Count သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
+    return redirect(url_for('users_table_view'))
+
+  users=load_users(); replaced=False
+  for u in users:
+    if u.get("user","").lower()==user.lower():
+      u["limit_count"]=new_limit 
+      replaced=True
+      break
+      
+  if not replaced:
+    session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
+    return redirect(url_for('users_table_view'))
+    
+  save_users(users)
+  # No need to sync config or restart zivpn, as port remains the same
+  
+  session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Limit ကို **{new_limit}** ယောက် သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
+  return redirect(url_for('users_table_view'))
+
 @app.route("/edit", methods=["POST"])
 def edit_user_password():
   if not require_login(): return redirect(url_for('login'))
@@ -1708,16 +1660,12 @@ def edit_user_password():
   
   if not user or not new_password:
     session["err"] = "User Name နှင့် Password အသစ် မပါဝင်ပါ"
-    # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
     return redirect(url_for('users_table_view'))
     
-  # 💡 NEW FIX: Myanmar Unicode Check for New Password
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
   if myanmar_chars_pattern.search(new_password):
       session["err"] = "❌ Password အသစ်တွင် မြန်မာစာလုံးများ ပါဝင်၍ မရပါ။ (English, Numbers သာ ခွင့်ပြုသည်)"
-      # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
       return redirect(url_for('users_table_view')) 
-  # 💡 END NEW FIX
 
   users=load_users(); replaced=False
   for u in users:
@@ -1728,7 +1676,6 @@ def edit_user_password():
       
   if not replaced:
     session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
-    # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
     return redirect(url_for('users_table_view'))
     
   save_users(users)
@@ -1736,7 +1683,6 @@ def edit_user_password():
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Password ပြောင်းပြီးပါပြီ။</h4>", "user":user, "password":new_password})
   return redirect(url_for('users_table_view'))
-
 
 @app.route("/delete", methods=["POST"])
 def delete_user_html():
@@ -1772,7 +1718,9 @@ def api_users():
     users = load_users() 
     for u in users: 
       u["expiring_soon"]=is_expiring_soon(u.get("expires",""))
-      u["online_count"]=get_user_online_count(u.get("port","")) # 💡 API Update
+      u["online_count"]=get_user_online_count(u.get("port",""))
+      u["limit_count"]=int(u.get("limit_count",1))
+      u["is_over_limit"] = u["online_count"] > u["limit_count"]
     return jsonify(users)
   
   if request.method=="POST":
@@ -1781,12 +1729,18 @@ def api_users():
     password=(data.get("password") or "").strip()
     expires=(data.get("expires") or "").strip()
     port=str(data.get("port") or "").strip()
-    
-    # 💡 NEW FIX: Myanmar Unicode Check for API
+    limit_count_str=(data.get("limit_count") or "1").strip()
+
+    try:
+      limit_count = int(limit_count_str)
+      if not (1 <= limit_count <= 10):
+          return jsonify({"ok": False, "err": "limit_count must be between 1 and 10"}), 400
+    except ValueError:
+      return jsonify({"ok": False, "err": "invalid limit_count"}), 400
+
     myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
     if myanmar_chars_pattern.search(user) or myanmar_chars_pattern.search(password):
         return jsonify({"ok": False, "err": "Myanmar characters not allowed in user or password"}), 400
-    # 💡 END NEW FIX
 
     if expires.isdigit():
       expires=(datetime.now()+timedelta(days=int(expires))).strftime("%Y-%m-%d")
@@ -1797,14 +1751,13 @@ def api_users():
     users=load_users(); replaced=False
     for u in users:
       if u.get("user","").lower()==user.lower():
-        u["password"]=password; u["expires"]=expires; u["port"]=port; replaced=True; break
+        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break
     if not replaced:
-      # 💡 NEW FIX: Pick a free port if not provided (API)
       if not port:
           port = pick_free_port()
           if not port:
               return jsonify({"ok": False, "err": "No free port available"}), 500
-      users.append({"user":user,"password":password,"expires":expires,"port":port})
+      users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count})
     save_users(users)
     sync_config_passwords()
     return jsonify({"ok":True})
@@ -1818,19 +1771,21 @@ def handle_405(e): return redirect(url_for('index'))
 if __name__ == "__main__":
   app.run(host="0.0.0.0", port=8080)
 PY
+echo "✅ web.py script ကို ထည့်သွင်းပြီးပါပြီ"
 
-# ===== Web systemd (unchanged) =====
+
+# ===== Web Service =====
+echo "🌐 Web Service (zivpn-web) ကို သွင်းနေပါတယ်..."
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
-Description=ZIVPN Web Panel
+Description=ZIVPN Web Admin
 After=network.target
 
 [Service]
 Type=simple
 User=root
-# Load optional web login credentials
-EnvironmentFile=-/etc/zivpn/web.env
-WorkingDirectory=/etc/zivpn 
+WorkingDirectory=/etc/zivpn
+EnvironmentFile=/etc/zivpn/web.env
 ExecStart=/usr/bin/python3 /etc/zivpn/web.py
 Restart=always
 RestartSec=3
@@ -1838,38 +1793,67 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
+echo "✅ zivpn-web.service ဖန်တီးပြီးပါပြီ"
 
-# ===== Networking: forwarding + DNAT + MASQ + UFW (unchanged) =====
-echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
+# ===== Networking: forwarding + DNAT + MASQ + UFW (Verbose Output) =====
+echo "🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်..."
+sysctl -w net.ipv4.ip_forward=1
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
+echo "-> net.ipv4.ip_forward=1 ဖွင့်ပြီးပါပြီ။"
 
 IFACE=$(ip -4 route ls | awk '{print $5; exit}')
 [ -n "${IFACE:-}" ] || IFACE=eth0
+echo "-> Main Network Interface: $IFACE ကို အသုံးပြုပါမည်။"
+
 # DNAT 6000:19999/udp -> :5667
-iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || \
-iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || {
+    iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667
+    echo "-> DNAT Rule ထည့်ပြီးပါပြီ။ (UDP 6000-19999 -> 5667)"
+}
 # MASQ out
-iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || \
-iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || {
+    iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+    echo "-> MASQUERADE Rule ထည့်ပြီးပါပြီ။"
+}
 
-ufw allow 5667/udp >/dev/null 2>&1 || true
-ufw allow 6000:19999/udp >/dev/null 2>&1 || true
-ufw allow 8080/tcp >/dev/null 2>&1 || true
-ufw reload >/dev/null 2>&1 || true
+# Allow UDP traffic for VPN ports
+iptables -C INPUT -p udp --dport 6000:19999 -j ACCEPT 2>/dev/null || {
+    iptables -A INPUT -p udp --dport 6000:19999 -j ACCEPT
+    echo "-> INPUT ACCEPT Rule ထည့်ပြီးပါပြီ။ (UDP 6000-19999)"
+}
 
-# ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) =====
-echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
-sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html || true
+# UFW
+ufw allow 5667/udp
+ufw allow 6000:19999/udp
+ufw allow 8080/tcp
+ufw reload
+echo "-> UFW Rules များ ဖွင့်ပြီးပါပြီ။"
+
+# ===== CRLF sanitize (No change) =====
+echo "🧹 CRLF ရှင်းနေပါတယ်..."
+find /etc/zivpn -type f -exec sed -i 's/\r$//' {} + 2>/dev/null || true
+sed -i 's/\r$//' /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/limit_enforcer.sh || true
+echo "✅ CRLF ရှင်းလင်းမှု ပြီးပါပြီ"
 
 # ===== Enable services =====
+echo "▶️ Services များ စတင်နေပါပြီ..."
 systemctl daemon-reload
 systemctl enable --now zivpn.service
 systemctl enable --now zivpn-web.service
+echo "✅ ZIVPN နှင့် Web Services များ ဖွင့်ပြီးပါပြီ။"
+
+# ===== Run initial limit enforcement =====
+echo "🛡️ ကနဦး Limit Enforcement ကို စတင်နေပါတယ်..."
+$LIMIT_ENFORCER_SCRIPT
+echo "✅ ကနဦး Limit Enforcement ပြီးဆုံးပါပြီ။ (Log ကို /var/log/zivpn_limit_enforcer.log တွင် စစ်ဆေးနိုင်သည်)"
+
 
 IP=$(hostname -I | awk '{print $1}')
-echo -e "\n$LINE\n${G}✅ Done${Z}"
-echo -e "${C}Web Panel (Add Users) :${Z} ${Y}http://$IP:8080${Z}"
-echo -e "${C}Web Panel (User List) :${Z} ${Y}http://$IP:8080/users${Z}"
-echo -e "${C}Services    :${Z} ${Y}systemctl status|systemctl restart zivpn  •  systemctl status|systemctl restart zivpn-web${Z}"
+echo -e "\n$LINE\n✅ ZIVPN UDP Server + Web UI + User Limit Auto-Delete Enforcement ပြီးဆုံးပါပြီ"
+echo "Web Panel (Add Users) : http://$IP:8080"
+echo "Web Panel (User List) : http://$IP:8080/users"
+echo "VPN Service Port: 5667 (DNAT by UDP 6000-19999)"
+echo "User Limit Enforcement: Active (တစ်မိနစ်တစ်ခါ Cron job ဖြင့် စစ်ဆေးပါမည်)"
+echo "Auto-Delete Log File: /var/log/zivpn_auto_delete.log"
+echo "Services Status: systemctl status zivpn • systemctl status zivpn-web"
 echo -e "$LINE"
