@@ -1,36 +1,46 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - Full Installation Script
-# (Colorless and Verbose Output for Clarity)
+# (Orange/Yellow Color with Verbose Output)
 set -euo pipefail
 
-# ===== Pretty (CLEANED UP) - REMOVED COLORS =====
-LINE="────────────────────────────────────────────────────────"
+# ANSI Color Codes
+ORANGE='\e[38;5;208m' # အမှန်တကယ် Orange/Tangerine
+YELLOW='\e[33m' # လိမ္မော်ရောင်နီးပါး/အဝါရောင်
+GREEN='\e[32m' # အစိမ်းရောင် (အောင်မြင်မှုအတွက်သာ)
+RED='\e[31m'   # အနီရောင် (အမှားအတွက်သာ)
+NC='\e[0m'     # အရောင်ပြန်ဖြုတ်ရန်
+
+LINE="${ORANGE}────────────────────────────────────────────────────────${NC}"
+
+# Function to display Section Headers
 say(){ 
     echo -e "\n$LINE"
-    echo -e "ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + Limit ကျော်လွန်ပါက Auto-Delete ပြုလုပ်မည့် စနစ်)"
+    echo -e "${ORANGE}🛡️ ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး)${NC}"
+    echo -e "${ORANGE}(User Limit ထည့်သွင်းပြီး + Limit ကျော်လွန်ပါက Auto-Delete ပြုလုပ်မည့် စနစ်)${NC}"
     echo -e "$LINE"
-    echo -e "သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။\n"
+    echo -e "${YELLOW}ℹ️ သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${NC}"
+    sleep 0.5 # Ensure output is flushed
 }
 say 
 
 # ===== Root check =====
 if [ "$(id -u)" -ne 0 ]; then
-  echo "ဤ script ကို root အဖြစ် run ရပါမယ် (sudo -i)"; exit 1
+  echo -e "${RED}❌ ဤ script ကို root အဖြစ် run ရပါမယ် (sudo -i)${NC}"; exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 
 # ===== apt guards =====
 wait_for_apt() {
-  echo "⏳ apt သင့်လျော်မှုကို စောင့်ပါ..."
-  for _ in $(seq 1 60); do
+  echo -e "${YELLOW}⏳ apt သင့်လျော်မှုကို စောင့်ဆိုင်းနေပါသည်...${NC}"
+  for _ in $(seq 1 30); do
     if pgrep -x apt-get >/dev/null || pgrep -x apt >/dev/null || pgrep -f 'apt.systemd.daily' >/dev/null || pgrep -x unattended-upgrade >/dev/null; then
-      sleep 5
+      sleep 2
     else
       return 0
     fi
   done
-  echo "⚠️ apt timers ကို ယာယီရပ်နေပါတယ်"
+  echo -e "${YELLOW}⚠️ apt timers ကို ယာယီရပ်နေပါတယ်...${NC}"
   systemctl stop --now unattended-upgrades.service 2>/dev/null || true
   systemctl stop --now apt-daily.service apt-daily.timer 2>/dev/null || true
   systemctl stop --now apt-daily-upgrade.service apt-daily-upgrade.timer 2>/dev/null || true
@@ -49,18 +59,18 @@ apt_guard_end(){
 }
 
 # ===== Packages =====
-echo "📦 Packages တင်နေပါတယ်..."
+echo -e "\n${ORANGE}📦 Packages တင်နေပါတယ်...${NC}"
 apt_guard_start
-apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::=
+apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null 2>&1
 apt_install_result=0
-apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates || apt_install_result=$?
+apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates >/dev/null 2>&1 || apt_install_result=$?
 if [ "$apt_install_result" -ne 0 ]; then
-  echo "⚠️ ပထမအကြိမ် Package တင်ခြင်း မအောင်မြင်၍ ပြန်ကြိုးစားပါမည်..."
-  apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt || true
-  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates
+  echo -e "${YELLOW}⚠️ ပထမအကြိမ် Package တင်ခြင်း မအောင်မြင်၍ ပြန်ကြိုးစားပါမည်...${NC}"
+  apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt >/dev/null 2>&1 || true
+  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates >/dev/null 2>&1
 fi
 apt_guard_end
-echo "✅ Packages တင်ပြီးပါပြီ"
+echo -e "${GREEN}✅ Packages တင်ပြီးပါပြီ${NC}"
 
 # stop old services
 systemctl stop zivpn.service 2>/dev/null || true
@@ -73,34 +83,36 @@ USERS="/etc/zivpn/users.json"
 ENVF="/etc/zivpn/web.env"
 TEMPLATES_DIR="/etc/zivpn/templates" 
 mkdir -p /etc/zivpn "$TEMPLATES_DIR" 
+echo -e "${GREEN}✅ လိုအပ်သော Folder များ ဖန်တီးပြီးပါပြီ။${NC}"
 
 # --- ZIVPN Binary, Config, Certs ---
-echo "⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်..."
+echo -e "\n${ORANGE}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${NC}"
 PRIMARY_URL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
 FALLBACK_URL="https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64"
 TMP_BIN="$(mktemp)"
 if ! curl -fsSL -o "$TMP_BIN" "$PRIMARY_URL"; then
-  echo "Primary URL မရ — latest ကို စမ်းပါတယ်..."
+  echo -e "${YELLOW}Primary URL မရ — latest ကို စမ်းပါတယ်...${NC}"
   curl -fSL -o "$TMP_BIN" "$FALLBACK_URL"
 fi
 install -m 0755 "$TMP_BIN" "$BIN"
 rm -f "$TMP_BIN"
-echo "✅ ZIVPN binary ဒေါင်းပြီးပါပြီ"
+echo -e "${GREEN}✅ ZIVPN binary ဒေါင်းပြီးပါပြီ${NC}"
 
 if [ ! -f "$CFG" ]; then
-  echo "🧩 config.json ဖန်တီးနေပါတယ်..."
+  echo -e "${ORANGE}🧩 config.json ဖန်တီးနေပါတယ်...${NC}"
   curl -fsSL -o "$CFG" "https://raw.githubusercontent.com/zahidbd2/udp-zivpn/main/config.json" || echo '{}' > "$CFG"
 fi
 
 if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
-  echo "🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်..."
+  echo -e "${ORANGE}🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်...${NC}"
   openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
     -subj "/C=MM/ST=Yangon/L=Yangon/O=M-69P/OU=Net/CN=zivpn" \
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
+echo -e "${GREEN}✅ SSL ဖိုင်များ ပြီးပါပြီ။${NC}"
 
 # --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN ---
-echo ""
+echo -e "\n${ORANGE}-------------------- Web Admin Setup --------------------${NC}"
 read -r -p "🔒 Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
   read -r -p "Web Admin Password: " WEB_PASS; echo
@@ -122,13 +134,13 @@ PY_SECRET
     echo "WEB_CONTACT_LINK=${CONTACT_LINK:-}" 
   } > "$ENVF"
   chmod 600 "$ENVF"
-  echo "✅ Web login UI ဖွင့်ထားပါတယ်"
+  echo -e "${GREEN}✅ Web login UI ဖွင့်ထားပါတယ်${NC}"
 else
   rm -f "$ENVF" 2>/dev/null || true
-  echo "ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)"
+  echo -e "${YELLOW}ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)${NC}"
 fi
 
-echo ""
+echo -e "\n${ORANGE}-------------------- VPN Password Setup --------------------${NC}"
 read -r -p "🔏 VPN Password List (ကော်မာဖြင့်ခွဲ) eg: M-69P,tak,dtac69 (Enter=zi): " input_pw
 if [ -z "${input_pw:-}" ]; then PW_LIST='["zi"]'; else
   PW_LIST=$(echo "$input_pw" | awk -F',' '{
@@ -149,9 +161,9 @@ if jq . >/dev/null 2>&1 <<<'{}'; then
 fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
-echo "✅ ZIVPN Config နှင့် User Data ဖန်တီးပြီးပါပြီ"
+echo -e "${GREEN}✅ ZIVPN Config နှင့် User Data ဖန်တီးပြီးပါပြီ${NC}"
 
-echo "🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်..."
+echo -e "\n${ORANGE}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${NC}"
 cat >/etc/systemd/system/zivpn.service <<'EOF'
 [Unit]
 Description=ZIVPN UDP Server
@@ -172,10 +184,10 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 EOF
-echo "✅ zivpn.service ဖန်တီးပြီးပါပြီ"
+echo -e "${GREEN}✅ zivpn.service ဖန်တီးပြီးပါပြီ${NC}"
 
 # ===== USER LIMIT ENFORCEMENT & AUTO-DELETE SCRIPT (UPDATED) =====
-echo "🛡️ User Limit Enforcement Script (Auto-Delete ပါဝင်) ထည့်သွင်းနေပါတယ်..."
+echo -e "\n${ORANGE}🛡️ User Limit Enforcement Script (Auto-Delete ပါဝင်) ထည့်သွင်းနေပါတယ်...${NC}"
 LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
 
 cat > "$LIMIT_ENFORCER_SCRIPT" << 'ENFORCER_EOF'
@@ -279,7 +291,7 @@ if [ -f "$USERS_FILE" ]; then
             online_count=$(get_online_count "$port")
             
             # Log the status (This line helps track current usage in the log file)
-            echo "$(date): Status: User $username - Port: $port, Online: $online_count, Limit: $limit" >> "$LOG_FILE"
+            # echo "$(date): Status: User $username - Port: $port, Online: $online_count, Limit: $limit" >> "$LOG_FILE"
             
             if [ "$online_count" -gt "$limit" ]; then
                 # User is over limit - Block the port and mark for deletion
@@ -331,23 +343,27 @@ echo "$(date): Limit enforcement completed" >> "$LOG_FILE"
 ENFORCER_EOF
 
 chmod +x "$LIMIT_ENFORCER_SCRIPT"
-echo "✅ limit_enforcer.sh script ကို ထည့်သွင်းပြီးပါပြီ"
+echo -e "${GREEN}✅ limit_enforcer.sh script ကို ထည့်သွင်းပြီးပါပြီ${NC}"
+sleep 0.2
 
 # ===== CRON JOB FOR LIMIT ENFORCEMENT =====
-echo "⏱️ Limit Enforcement Cron Job ထည့်သွင်းနေပါတယ်..."
+echo -e "\n${ORANGE}⏱️ Limit Enforcement Cron Job (တစ်မိနစ်တစ်ခါ) ထည့်သွင်းနေပါတယ်...${NC}"
 # Remove old cron entry if exists
 crontab -l 2>/dev/null | grep -v "$LIMIT_ENFORCER_SCRIPT" | crontab - 2>/dev/null || true
 # Add new cron entry (run every minute) - Suppress output of cron job itself
 (crontab -l 2>/dev/null; echo "* * * * * $LIMIT_ENFORCER_SCRIPT >/dev/null 2>&1") | crontab -
-echo "✅ Cron Job (တစ်မိနစ်တစ်ခါ) ထည့်သွင်းပြီးပါပြီ"
+echo -e "${GREEN}✅ Cron Job (တစ်မိနစ်တစ်ခါ) ထည့်သွင်းပြီးပါပြီ${NC}"
+sleep 0.2
 
 # ===== CLEAR EXISTING BLOCKING RULES =====
-echo "🧹 လက်ရှိ iptables blocking rules များ ရှင်းလင်းနေပါတယ်..."
+echo -e "\n${ORANGE}🧹 လက်ရှိ iptables blocking rules များ ရှင်းလင်းနေပါတယ်...${NC}"
 iptables-save | grep -v "ZIVPN_BLOCKED" | iptables-restore 2>/dev/null || true
-echo "✅ Iptables rules များ ရှင်းလင်းပြီးပါပြီ"
+echo -e "${GREEN}✅ Iptables rules များ ရှင်းလင်းပြီးပါပြီ${NC}"
+sleep 0.2
 
 # --- TEMPLATE FILES (users_table.html and users_table_wrapper.html) ---
-echo "📄 Web UI Template ဖိုင်များ ဖန်တီးနေပါတယ်..."
+echo -e "\n${ORANGE}📄 Web UI Template ဖိုင်များ ဖန်တီးနေပါတယ်...${NC}"
+# --- users_table.html ---
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
     <table>
@@ -733,6 +749,7 @@ tr.over-limit {
 </script>
 TABLE_HTML
 
+# --- users_table_wrapper.html ---
 cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
 <!doctype html>
 <html lang="my"><head><meta charset="utf-8">
@@ -1042,9 +1059,11 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
 
 </body></html>
 WRAPPER_HTML
+echo -e "${GREEN}✅ Web UI Template ဖိုင်များ ဖန်တီးပြီးပါပြီ${NC}"
+sleep 0.2
 
 # ===== WEB PANEL (web.py) - NO CHANGE =====
-echo "🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်..."
+echo -e "\n${ORANGE}🖥️ Web Panel (web.py - Python Flask) ကို စစ်ဆေးနေပါတယ်...${NC}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
 import json, re, subprocess, os, tempfile, hmac
@@ -1771,11 +1790,12 @@ def handle_405(e): return redirect(url_for('index'))
 if __name__ == "__main__":
   app.run(host="0.0.0.0", port=8080)
 PY
-echo "✅ web.py script ကို ထည့်သွင်းပြီးပါပြီ"
+echo -e "${GREEN}✅ web.py script ကို ထည့်သွင်းပြီးပါပြီ${NC}"
+sleep 0.2
 
 
 # ===== Web Service =====
-echo "🌐 Web Service (zivpn-web) ကို သွင်းနေပါတယ်..."
+echo -e "\n${ORANGE}🌐 Web Service (zivpn-web) ကို သွင်းနေပါတယ်...${NC}"
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
 Description=ZIVPN Web Admin
@@ -1793,67 +1813,80 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-echo "✅ zivpn-web.service ဖန်တီးပြီးပါပြီ"
+echo -e "${GREEN}✅ zivpn-web.service ဖန်တီးပြီးပါပြီ${NC}"
+sleep 0.2
 
 # ===== Networking: forwarding + DNAT + MASQ + UFW (Verbose Output) =====
-echo "🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်..."
-sysctl -w net.ipv4.ip_forward=1
+echo -e "\n${ORANGE}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${NC}"
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
-echo "-> net.ipv4.ip_forward=1 ဖွင့်ပြီးပါပြီ။"
+echo -e "${YELLOW} -> net.ipv4.ip_forward=1 ဖွင့်ပြီးပါပြီ။${NC}"
 
 IFACE=$(ip -4 route ls | awk '{print $5; exit}')
 [ -n "${IFACE:-}" ] || IFACE=eth0
-echo "-> Main Network Interface: $IFACE ကို အသုံးပြုပါမည်။"
+echo -e "${YELLOW} -> Main Network Interface: $IFACE ကို အသုံးပြုပါမည်။${NC}"
 
 # DNAT 6000:19999/udp -> :5667
 iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || {
     iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667
-    echo "-> DNAT Rule ထည့်ပြီးပါပြီ။ (UDP 6000-19999 -> 5667)"
+    echo -e "${YELLOW} -> DNAT Rule ထည့်ပြီးပါပြီ။ (UDP 6000-19999 -> 5667)${NC}"
 }
 # MASQ out
 iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || {
     iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
-    echo "-> MASQUERADE Rule ထည့်ပြီးပါပြီ။"
+    echo -e "${YELLOW} -> MASQUERADE Rule ထည့်ပြီးပါပြီ။${NC}"
 }
 
 # Allow UDP traffic for VPN ports
 iptables -C INPUT -p udp --dport 6000:19999 -j ACCEPT 2>/dev/null || {
     iptables -A INPUT -p udp --dport 6000:19999 -j ACCEPT
-    echo "-> INPUT ACCEPT Rule ထည့်ပြီးပါပြီ။ (UDP 6000-19999)"
+    echo -e "${YELLOW} -> INPUT ACCEPT Rule ထည့်ပြီးပါပြီ။ (UDP 6000-19999)${NC}"
 }
 
 # UFW
-ufw allow 5667/udp
-ufw allow 6000:19999/udp
-ufw allow 8080/tcp
-ufw reload
-echo "-> UFW Rules များ ဖွင့်ပြီးပါပြီ။"
+ufw allow 5667/udp >/dev/null 2>&1
+ufw allow 6000:19999/udp >/dev/null 2>&1
+ufw allow 8080/tcp >/dev/null 2>&1
+ufw reload >/dev/null 2>&1
+echo -e "${YELLOW} -> UFW Rules များ ဖွင့်ပြီးပါပြီ။ (8080/tcp, 5667/udp, 6000-19999/udp)${NC}"
+sleep 0.2
 
 # ===== CRLF sanitize (No change) =====
-echo "🧹 CRLF ရှင်းနေပါတယ်..."
+echo -e "\n${ORANGE}🧹 CRLF ရှင်းနေပါတယ်...${NC}"
 find /etc/zivpn -type f -exec sed -i 's/\r$//' {} + 2>/dev/null || true
 sed -i 's/\r$//' /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/limit_enforcer.sh || true
-echo "✅ CRLF ရှင်းလင်းမှု ပြီးပါပြီ"
+echo -e "${GREEN}✅ CRLF ရှင်းလင်းမှု ပြီးပါပြီ${NC}"
+sleep 0.2
 
 # ===== Enable services =====
-echo "▶️ Services များ စတင်နေပါပြီ..."
+echo -e "\n${ORANGE}▶️ Services များ စတင်နေပါပြီ...${NC}"
 systemctl daemon-reload
-systemctl enable --now zivpn.service
-systemctl enable --now zivpn-web.service
-echo "✅ ZIVPN နှင့် Web Services များ ဖွင့်ပြီးပါပြီ။"
+systemctl enable --now zivpn.service >/dev/null 2>&1
+systemctl enable --now zivpn-web.service >/dev/null 2>&1
 
-# ===== Run initial limit enforcement =====
-echo "🛡️ ကနဦး Limit Enforcement ကို စတင်နေပါတယ်..."
+if systemctl is-active --quiet zivpn.service && systemctl is-active --quiet zivpn-web.service; then
+    echo -e "${GREEN}✅ ZIVPN နှင့် Web Services များ အောင်မြင်စွာ ဖွင့်ပြီးပါပြီ။${NC}"
+else
+    echo -e "${YELLOW}⚠️ Services များ စတင်ရာတွင် ပြဿနာ အနည်းငယ် ရှိနိုင်ပါသည် (Status ပြန်စစ်ပါ)${NC}"
+fi
+sleep 0.2
+
+# ===== Run initial limit enforcement (Flush output before final message) =====
+echo -e "\n${ORANGE}🛡️ ကနဦး Limit Enforcement ကို စတင်နေပါတယ်...${NC}"
 $LIMIT_ENFORCER_SCRIPT
-echo "✅ ကနဦး Limit Enforcement ပြီးဆုံးပါပြီ။ (Log ကို /var/log/zivpn_limit_enforcer.log တွင် စစ်ဆေးနိုင်သည်)"
+echo -e "${GREEN}✅ ကနဦး Limit Enforcement ပြီးဆုံးပါပြီ။ (Log ကို /var/log/zivpn_limit_enforcer.log တွင် စစ်ဆေးနိုင်သည်)${NC}"
 
+# Ensure final output is not cut off
+sleep 0.5 
+sync
 
 IP=$(hostname -I | awk '{print $1}')
-echo -e "\n$LINE\n✅ ZIVPN UDP Server + Web UI + User Limit Auto-Delete Enforcement ပြီးဆုံးပါပြီ"
-echo "Web Panel (Add Users) : http://$IP:8080"
-echo "Web Panel (User List) : http://$IP:8080/users"
-echo "VPN Service Port: 5667 (DNAT by UDP 6000-19999)"
-echo "User Limit Enforcement: Active (တစ်မိနစ်တစ်ခါ Cron job ဖြင့် စစ်ဆေးပါမည်)"
-echo "Auto-Delete Log File: /var/log/zivpn_auto_delete.log"
-echo "Services Status: systemctl status zivpn • systemctl status zivpn-web"
+echo -e "\n$LINE"
+echo -e "${GREEN}✅ ZIVPN UDP Server + Web UI + User Limit Auto-Delete Enforcement ပြီးဆုံးပါပြီ${NC}"
+echo -e "${ORANGE}Web Panel (Add Users) : http://$IP:8080${NC}"
+echo -e "${ORANGE}Web Panel (User List) : http://$IP:8080/users${NC}"
+echo -e "${YELLOW}VPN Service Port: 5667 (DNAT by UDP 6000-19999)${NC}"
+echo -e "${YELLOW}User Limit Enforcement: Active (တစ်မိနစ်တစ်ခါ Cron job ဖြင့် စစ်ဆေးပါမည်)${NC}"
+echo -e "${YELLOW}Auto-Delete Log File: /var/log/zivpn_auto_delete.log${NC}"
+echo -e "${YELLOW}Services Status: systemctl status zivpn • systemctl status zivpn-web${NC}"
 echo -e "$LINE"
