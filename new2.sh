@@ -50,7 +50,7 @@ apt_guard_end(){
   if [ "${CNF_DISABLED:-0}" = "1" ] && [ -f "${CNF_CONF}.disabled" ]; then mv "${CNF_CONF}.disabled" "$CNF_CONF"; fi
 }
 
-# ===== Packages (CHANGED: added Y color) =====
+# ===== Packages (unchanged) =====
 echo -e "${Y}📦 Packages တင်နေပါတယ်...${Z}"
 apt_guard_start
 apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
@@ -72,7 +72,7 @@ ENVF="/etc/zivpn/web.env"
 TEMPLATES_DIR="/etc/zivpn/templates" 
 mkdir -p /etc/zivpn "$TEMPLATES_DIR" 
 
-# --- ZIVPN Binary, Config, Certs (CHANGED: added Y color) ---
+# --- ZIVPN Binary, Config, Certs (UNCHANGED) ---
 echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
 PRIMARY_URL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
 FALLBACK_URL="https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64"
@@ -96,7 +96,7 @@ if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
 
-# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (unchanged logic) ---
+# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (UNCHANGED logic) ---
 echo -e "${G}🔒 Web Admin Login UI ထည့်မလား..?${Z}"
 read -r -p "Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
@@ -123,7 +123,7 @@ PY_SECRET
   echo -e "${G}✅ Web login UI ဖွင့်ထားပါတယ်${Z}"
 else
   rm -f "$ENVF" 2>/dev/null || true
-  echo -e "${Y}ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)${Z}" # ADDED Y
+  echo -e "${Y}ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)${Z}"
 fi
 
 echo -e "${G}🔏 VPN Password List (ကော်မာဖြင့်ခွဲ) eg: M-69P,tak,dtac69${Z}"
@@ -148,7 +148,7 @@ fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
 
-echo -e "${Y}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${Z}" # ADDED Y
+echo -e "${Y}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${Z}"
 cat >/etc/systemd/system/zivpn.service <<'EOF'
 [Unit]
 Description=ZIVPN UDP Server
@@ -170,7 +170,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# ===== USER LIMIT ENFORCEMENT SCRIPT (CHANGED: added Y color) =====
+# ===== USER LIMIT ENFORCEMENT SCRIPT =====
 echo -e "${Y}🛡️ User Limit Enforcement Script ထည့်သွင်းနေပါတယ်...${Z}"
 LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
 
@@ -234,18 +234,18 @@ ENFORCER_EOF
 
 chmod +x "$LIMIT_ENFORCER_SCRIPT"
 
-# ===== CRON JOB FOR LIMIT ENFORCEMENT (CHANGED: added Y color) =====
+# ===== CRON JOB FOR LIMIT ENFORCEMENT =====
 echo -e "${Y}⏱️ Limit Enforcement Cron Job ထည့်သွင်းနေပါတယ်...${Z}"
 # Remove old cron entry if exists
 crontab -l 2>/dev/null | grep -v "$LIMIT_ENFORCER_SCRIPT" | crontab - 2>/dev/null || true
 # Add new cron entry
 (crontab -l 2>/dev/null; echo "* * * * * $LIMIT_ENFORCER_SCRIPT >/dev/null 2>&1") | crontab -
 
-# ===== CLEAR EXISTING BLOCKING RULES (CHANGED: added Y color) =====
+# ===== CLEAR EXISTING BLOCKING RULES =====
 echo -e "${Y}🧹 လက်ရှိ iptables blocking rules များ ရှင်းလင်းနေပါတယ်...${Z}"
 iptables-save | grep -v "ZIVPN_BLOCKED" | iptables-restore 2>/dev/null || true
 
-# ===== TEMPLATES (users_table.html) (CHANGED: added Y color) =====
+# ===== TEMPLATES (users_table.html) =====
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -633,7 +633,7 @@ tr.over-limit {
 TABLE_HTML
 
 # ===== WEB PANEL (web.py) =====
-echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}" # ADDED Y
+echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
 import json, re, subprocess, os, tempfile, hmac
@@ -1353,7 +1353,7 @@ if __name__ == "__main__":
   app.run(host="0.0.0.0", port=8080)
 PY
 
-# ===== users_table_wrapper.html (CHANGED: added Y color) =====
+# ===== users_table_wrapper.html =====
 echo -e "${Y}📄 Table Wrapper (users_table_wrapper.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
 <!doctype html>
@@ -1665,7 +1665,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
 </body></html>
 WRAPPER_HTML
 
-# ===== Web Service (CHANGED: added Y color) =====
+# ===== Web Service =====
 echo -e "${Y}🌐 Web Service (zivpn-web) ကို သွင်းနေပါတယ်...${Z}"
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
@@ -1685,7 +1685,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-# ===== Networking: forwarding + DNAT + MASQ + UFW (CHANGED: added Y color) =====
+# ===== Networking: forwarding + DNAT + MASQ + UFW =====
 echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
@@ -1707,7 +1707,7 @@ ufw allow 6000:19999/udp >/dev/null 2>&1 || true
 ufw allow 8080/tcp >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
-# ===== CRLF sanitize (CHANGED: added Y color) =====
+# ===== CRLF sanitize =====
 echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
 sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh || true
 
@@ -1716,7 +1716,7 @@ systemctl daemon-reload
 systemctl enable --now zivpn.service
 systemctl enable --now zivpn-web.service
 
-# ===== Run initial limit enforcement (CHANGED: added Y color) =====
+# ===== Run initial limit enforcement =====
 echo -e "${Y}🛡️ ကနဦး Limit Enforcement ကို စတင်နေပါတယ်...${Z}"
 $LIMIT_ENFORCER_SCRIPT
 
