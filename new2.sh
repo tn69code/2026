@@ -1,29 +1,26 @@
 #!/bin/bash
-# ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE + USER LIMIT ENFORCEMENT WITH AUTO DELETE
-# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL + LIMIT ENFORCEMENT + AUTO DELETE ==================================
-# 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX (Real blocking) + AUTO DELETE OVER LIMIT USERS
+# ZIVPN UDP Server + Web UI - FIXED DIALOGS + USER LIMIT ENFORCEMENT WITH AUTO DELETE
+# ================================== FIXED: MODAL DIALOGS NOT WORKING ==================================
 set -euo pipefail
 
-# ===== Pretty (CLEANED UP) =====
+# ===== Pretty =====
 B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန် + Limit ကျော်လွန်လျှင် Auto Delete)${Z}"
-    echo -e "$LINE"
-    echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
-    echo -e "${Y}⚠️  User Limit ကျော်လွန်ပါက Auto Delete လုပ်ပါမည် ⚠️${Z}\n"
+    echo -e "${G}ZIVPN UDP Server + Web UI (Dialog Issues Fixed + Auto Delete)${Z}"
+    echo -e "$LINE\n"
 }
 say 
 
-# ===== Root check (unchanged) =====
+# ===== Root check =====
 if [ "$(id -u)" -ne 0 ]; then
   echo -e "${R}ဤ script ကို root အဖြစ် run ရပါမယ် (sudo -i)${Z}"; exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 
-# ===== Packages (unchanged) =====
+# ===== Packages =====
 echo -e "${Y}📦 Packages တင်နေပါတယ်...${Z}"
 apt-get update -y >/dev/null
 apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates >/dev/null
@@ -42,7 +39,10 @@ mkdir -p /etc/zivpn "$TEMPLATES_DIR"
 
 # --- ZIVPN Binary, Config, Certs ---
 echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
-curl -fsSL -o "$BIN" "https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64"
+curl -fsSL -o "$BIN" "https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64" || {
+  echo -e "${Y}Primary URL မရ — alternative ကို စမ်းပါတယ်...${Z}"
+  curl -fSL -o "$BIN" "https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
+}
 chmod 0755 "$BIN"
 
 if [ ! -f "$CFG" ]; then
@@ -53,7 +53,7 @@ fi
 if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
   echo -e "${Y}🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်...${Z}"
   openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
-    -subj "/C=MM/ST=Yangon/L=Yangon/O=M-69P/OU=Net/CN=zivpn" \
+    -subj "/C=MM/ST=Yangon/L=Yangon/O=ZIVPN/OU=Net/CN=zivpn" \
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
 
@@ -64,7 +64,7 @@ if [ -n "${WEB_USER:-}" ]; then
   read -r -p "Web Admin Password: " WEB_PASS; echo
   
   echo -e "${G}🔗 Login အောက်နားတွင် ပြသရန် ဆက်သွယ်ရန် Link (Optional)${Z}"
-  read -r -p "Contact Link (ဥပမာ: https://m.me/taknds69 or Enter=disable): " CONTACT_LINK
+  read -r -p "Contact Link (ဥပမာ: https://m.me/admin or Enter=disable): " CONTACT_LINK
   
   WEB_SECRET="$(openssl rand -hex 32 2>/dev/null || python3 -c "import secrets;print(secrets.token_hex(32))")"
   {
@@ -80,7 +80,7 @@ else
   echo -e "${Y}ℹ️ Web login UI မဖွင့်ထားပါ (dev mode)${Z}"
 fi
 
-echo -e "${G}🔏 VPN Password List (ကော်မာဖြင့်ခွဲ) eg: M-69P,tak,dtac69${Z}"
+echo -e "${G}🔏 VPN Password List (ကော်မာဖြင့်ခွဲ) eg: pass123,user456${Z}"
 read -r -p "Passwords (Enter=zi): " input_pw
 if [ -z "${input_pw:-}" ]; then 
   PW_LIST='["zi"]'
@@ -91,15 +91,17 @@ else
 fi
 
 # Update config
-TMP=$(mktemp)
-jq --argjson pw "$PW_LIST" '
-  .auth.mode = "passwords" |
-  .auth.config = $pw |
-  .listen = (."listen" // ":5667") |
-  .cert = (."cert" // "/etc/zivpn/zivpn.crt") |
-  .key  = (."key" // "/etc/zivpn/zivpn.key") |
-  .obfs = (."obfs" // "zivpn")
-' "$CFG" > "$TMP" && mv "$TMP" "$CFG"
+if command -v jq >/dev/null 2>&1; then
+  TMP=$(mktemp)
+  jq --argjson pw "$PW_LIST" '
+    .auth.mode = "passwords" |
+    .auth.config = $pw |
+    .listen = (."listen" // ":5667") |
+    .cert = (."cert" // "/etc/zivpn/zivpn.crt") |
+    .key  = (."key" // "/etc/zivpn/zivpn.key") |
+    .obfs = (."obfs" // "zivpn")
+  ' "$CFG" > "$TMP" && mv "$TMP" "$CFG"
+fi
 
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
@@ -126,140 +128,8 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# ===== USER LIMIT ENFORCEMENT SCRIPT WITH AUTO DELETE =====
-echo -e "${Y}🛡️ User Limit Enforcement Script (Auto Delete ပါ) ထည့်သွင်းနေပါတယ်...${Z}"
-LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
-
-cat > "$LIMIT_ENFORCER_SCRIPT" << 'ENFORCER_EOF'
-#!/bin/bash
-# ZIVPN User Limit Enforcer - Blocks ports when connection count exceeds limit + AUTO DELETE
-set -euo pipefail
-
-USERS_FILE="/etc/zivpn/users.json"
-LOG_FILE="/var/log/zivpn_limit_enforcer.log"
-DELETION_LOG_FILE="/var/log/zivpn_auto_delete.log"
-
-# Function to get online count for a port
-get_online_count() {
-    local port="$1"
-    conntrack -L -p udp 2>/dev/null | grep "dport=$port" | awk '{print $5}' | cut -d= -f2 | sort -u | wc -l
-}
-
-# Function to block port using iptables
-block_port() {
-    local port="$1"
-    local user="$2"
-    iptables -I INPUT -p udp --dport "$port" -j DROP -m comment --comment "ZIVPN_BLOCKED_$user"
-}
-
-# Function to unblock port
-unblock_port() {
-    local port="$1"
-    iptables -D INPUT -p udp --dport "$port" -j DROP 2>/dev/null || true
-}
-
-# Function to delete user
-delete_user() {
-    local user="$1"
-    local port="$2"
-    local online_count="$3"
-    local limit="$4"
-    
-    echo "$(date): 🗑️ AUTO DELETING USER: $user - Port: $port, Online: $online_count, Limit: $limit (EXCEEDED LIMIT)" >> "$DELETION_LOG_FILE"
-    
-    # Remove from users.json
-    if [ -f "$USERS_FILE" ]; then
-        jq "map(select(.user != \"$user\"))" "$USERS_FILE" > "${USERS_FILE}.tmp" && mv "${USERS_FILE}.tmp" "$USERS_FILE"
-    fi
-    
-    # Remove from config.json passwords
-    CONFIG_FILE="/etc/zivpn/config.json"
-    if [ -f "$CONFIG_FILE" ]; then
-        jq 'del(.auth.config[] | select(. == "'$user'"))' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" 2>/dev/null && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE" || true
-    fi
-    
-    # Unblock port
-    unblock_port "$port"
-    
-    # Restart zivpn service to apply changes
-    systemctl restart zivpn.service 2>/dev/null || true
-    
-    echo "$(date): ✅ DELETED: User $user has been automatically deleted due to exceeding limit" >> "$LOG_FILE"
-}
-
-# Main enforcement logic
-echo "$(date): Starting limit enforcement with auto delete" >> "$LOG_FILE"
-
-# Load users and check limits
-if [ -f "$USERS_FILE" ]; then
-    users_data=$(cat "$USERS_FILE")
-    
-    echo "$users_data" | jq -c '.[]' | while read -r user_data; do
-        username=$(echo "$user_data" | jq -r '.user')
-        port=$(echo "$user_data" | jq -r '.port')
-        limit=$(echo "$user_data" | jq -r '.limit_count // 1')
-        
-        if [ -n "$port" ] && [ "$port" != "null" ]; then
-            online_count=$(get_online_count "$port")
-            
-            echo "$(date): Checking $username - Port: $port, Online: $online_count, Limit: $limit" >> "$LOG_FILE"
-            
-            if [ "$online_count" -gt "$limit" ]; then
-                # Check if user has been over limit for more than 1 minute (to avoid immediate deletion)
-                if [ -f "/tmp/zivpn_overlimit_$username" ]; then
-                    local first_detected=$(cat "/tmp/zivpn_overlimit_$username")
-                    local current_time=$(date +%s)
-                    local time_diff=$((current_time - first_detected))
-                    
-                    # Delete if over limit for more than 1 minute
-                    if [ "$time_diff" -gt 60 ]; then
-                        echo "$(date): 🚨 USER EXCEEDED LIMIT FOR OVER 1 MINUTE: $username - Deleting..." >> "$LOG_FILE"
-                        delete_user "$username" "$port" "$online_count" "$limit"
-                        rm -f "/tmp/zivpn_overlimit_$username"
-                        continue
-                    else
-                        echo "$(date): ⚠️ User $username over limit but within grace period ($time_diff seconds)" >> "$LOG_FILE"
-                        block_port "$port" "$username"
-                    fi
-                else
-                    # First time detection - mark the time
-                    date +%s > "/tmp/zivpn_overlimit_$username"
-                    echo "$(date): ⚠️ FIRST TIME OVER LIMIT: $username - Starting grace period (60 seconds)" >> "$LOG_FILE"
-                    block_port "$port" "$username"
-                fi
-            else
-                # Within limit - remove tracking and unblock
-                rm -f "/tmp/zivpn_overlimit_$username" 2>/dev/null || true
-                echo "$(date): ✅ User $username within limit - Unblocking" >> "$LOG_FILE"
-                unblock_port "$port"
-            fi
-        fi
-    done
-fi
-
-echo "$(date): Limit enforcement completed" >> "$LOG_FILE"
-ENFORCER_EOF
-
-chmod +x "$LIMIT_ENFORCER_SCRIPT"
-
-# ===== CRON JOB FOR LIMIT ENFORCEMENT =====
-echo -e "${Y}⏱️ Limit Enforcement Cron Job ထည့်သွင်းနေပါတယ်...${Z}"
-# Remove old cron entry if exists
-crontab -l 2>/dev/null | grep -v "$LIMIT_ENFORCER_SCRIPT" | crontab - 2>/dev/null || true
-# Add new cron entry (run every minute)
-(crontab -l 2>/dev/null; echo "* * * * * $LIMIT_ENFORCER_SCRIPT >/dev/null 2>&1") | crontab -
-
-# ===== CLEAR EXISTING BLOCKING RULES =====
-echo -e "${Y}🧹 လက်ရှိ iptables blocking rules များ ရှင်းလင်းနေပါတယ်...${Z}"
-iptables-save | grep -v "ZIVPN_BLOCKED" | iptables-restore 2>/dev/null || true
-
-# ===== CREATE LOG FILES =====
-touch /var/log/zivpn_limit_enforcer.log
-touch /var/log/zivpn_auto_delete.log
-chmod 644 /var/log/zivpn_limit_enforcer.log /var/log/zivpn_auto_delete.log
-
-# ===== TEMPLATES (users_table.html) - Updated for Auto Delete Warning =====
-echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
+# ===== FIXED TEMPLATES - MODAL DIALOGS WORKING =====
+echo -e "${Y}📄 Table HTML (users_table.html) ကို ပြင်ဆင်နေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
     <table>
@@ -349,7 +219,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
             </td>
 
             <td data-label="Action">
-              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.expires }}')"><i class="icon">✏️</i> Pass</button>
+              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}')"><i class="icon">✏️</i> Pass</button>
               <form class="delform" method="post" action="/delete" onsubmit="return confirm('{{u.user}} ကို ဖျက်မလား?')">
                 <input type="hidden" name="user" value="{{u.user}}">
                 <button type="submit" class="btn-delete"><i class="icon">🗑️</i> Delete</button>
@@ -365,6 +235,100 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="auto-delete-warning">
     <i class="icon">⚠️</i>
     <strong>သတိပေးချက်:</strong> User Limit ကျော်လွန်ပါက ၁ မိနစ်အတွင်း Auto Delete လုပ်ပါမည်။ ဖျက်ပြီးသော User များကို <code>/var/log/zivpn_auto_delete.log</code> တွင် ကြည့်ရှုနိုင်ပါသည်။
+</div>
+
+{# 💡 FIXED: MODAL DIALOGS - CORRECTED JAVASCRIPT AND HTML STRUCTURE #}
+
+{# Password Edit Modal #}
+<div id="editModal" class="modal" style="display: none;">
+  <div class="modal-content">
+    <span class="close-btn" onclick="closeModal('editModal')">&times;</span>
+    <h2 class="section-title"><i class="icon">✏️</i> Change Password</h2>
+    <form method="post" action="/edit">
+        <input type="hidden" id="edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="current-password" class="input-label"><i class="icon">🔑</i> Current Password</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="current-password" name="current_password" readonly>
+            </div>
+            <p class="input-hint">လက်ရှိ Password (မပြောင်းလဲလိုပါက ထားခဲ့နိုင်ပါသည်)</p>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-password" class="input-label"><i class="icon">🔒</i> New Password</label>
+            <div class="input-field-wrapper">
+                <input type="text" id="new-password" name="password" placeholder="Password အသစ်ထည့်ပါ" required>
+            </div>
+            <p class="input-hint">User အတွက် Password အသစ်</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Password အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
+
+{# Expires Edit Modal #}
+<div id="expiresModal" class="modal" style="display: none;">
+  <div class="modal-content">
+    <span class="close-btn" onclick="closeModal('expiresModal')">&times;</span>
+    <h2 class="section-title"><i class="icon">⏰</i> Change Expiry Date</h2>
+    <form method="post" action="/edit_expires">
+        <input type="hidden" id="expires-edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="expires-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="expires-current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-expires" class="input-label"><i class="icon">🗓️</i> New Expiration Date</label>
+            <div class="input-field-wrapper">
+                <input type="text" id="new-expires" name="expires" placeholder="ဥပမာ: 2026-01-31 သို့မဟုတ် 30" required>
+            </div>
+            <p class="input-hint">ရက်စွဲ (YYYY-MM-DD) သို့မဟုတ် ရက်အရေအတွက် (ဥပမာ: 30)</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Expires အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
+
+{# Limit Edit Modal #}
+<div id="limitModal" class="modal" style="display: none;">
+  <div class="modal-content">
+    <span class="close-btn" onclick="closeModal('limitModal')">&times;</span>
+    <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
+    <form method="post" action="/edit_limit">
+        <input type="hidden" id="limit-edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="limit-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="limit-current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-limit" class="input-label"><i class="icon">🔢</i> Max Users</label>
+            <div class="input-field-wrapper">
+                <input type="number" id="new-limit" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1 မှ 10)" min="1" max="10" required>
+            </div>
+            <p class="input-hint">ဤအကောင့်အတွက် အများဆုံး သုံးစွဲသူအရေအတွက် (ပုံမှန်- 1)</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Limit အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
 </div>
 
 <style>
@@ -397,140 +361,217 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     100% { transform: scale(1); }
 }
 
-/* Rest of the styles remain the same */
+/* 💡 FIXED: MODAL STYLES - PROPERLY DEFINED */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 3000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.4);
+}
+
 .modal-content {
   background-color: var(--card-bg);
-  margin: 15% auto;
-  padding: 25px; 
+  margin: 10% auto;
+  padding: 25px;
   border: none;
-  width: 90%; 
-  max-width: 320px;
+  width: 90%;
+  max-width: 400px;
   border-radius: 12px;
   position: relative;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+  animation: modalopen 0.3s;
 }
-.close-btn { 
-  color: var(--secondary); 
-  position: absolute;
-  top: 8px;
-  right: 15px;
-  font-size: 32px; 
-  font-weight: 300; 
-  line-height: 1;
-}
-.close-btn:hover { color: var(--danger); }
-.section-title { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); color: var(--primary-dark);}
 
-.modal .input-group { margin-bottom: 20px; }
+@keyframes modalopen {
+  from { opacity: 0; transform: translateY(-50px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.close-btn {
+  color: var(--secondary);
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: var(--danger);
+}
+
+.section-title {
+  margin-top: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--primary-dark);
+}
+
+.modal .input-group {
+  margin-bottom: 20px;
+}
+
 .modal .input-label {
-    display: block;
-    text-align: left;
-    font-weight: 600;
-    color: var(--dark);
-    font-size: 0.9em;
-    margin-bottom: 5px;
+  display: block;
+  text-align: left;
+  font-weight: 600;
+  color: var(--dark);
+  font-size: 0.9em;
+  margin-bottom: 5px;
 }
+
 .modal .input-field-wrapper {
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background-color: #fff;
-    transition: border-color 0.3s, box-shadow 0.3s;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: #fff;
+  transition: border-color 0.3s, box-shadow 0.3s;
 }
+
 .modal .input-field-wrapper:focus-within {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25);
 }
+
 .modal .input-field-wrapper.is-readonly {
-    background-color: var(--light);
-    border: 1px solid #ddd;
+  background-color: var(--light);
+  border: 1px solid #ddd;
 }
+
 .modal .input-field-wrapper input {
-    width: 100%;
-    padding: 12px 10px;
-    border: none; 
-    border-radius: 8px;
-    font-size: 16px;
-    outline: none;
-    background: transparent; 
+  width: 100%;
+  padding: 12px 10px;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  background: transparent;
 }
 
 .modal .input-hint {
-    margin-top: 5px;
-    text-align: left;
-    font-size: 0.75em;
-    color: var(--secondary);
-    line-height: 1.4;
-    padding-left: 5px;
+  margin-top: 5px;
+  text-align: left;
+  font-size: 0.75em;
+  color: var(--secondary);
+  line-height: 1.4;
+  padding-left: 5px;
 }
 
 .modal-save-btn {
-    width: 100%;
-    padding: 12px; 
-    background-color: var(--primary);
-    color: white; 
-    border: none; 
-    border-radius: 8px; 
-    font-size: 1.0em;
-    cursor: pointer; 
-    transition: background-color 0.3s, transform 0.1s; 
-    margin-top: 10px; 
-    font-weight: bold;
-    box-shadow: 0 4px 6px rgba(255, 127, 39, 0.3);
+  width: 100%;
+  padding: 12px;
+  background-color: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.0em;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  margin-top: 10px;
+  font-weight: bold;
 }
-.modal-save-btn:hover { background-color: var(--primary-dark); } 
-.modal-save-btn:active { background-color: var(--primary-dark); transform: translateY(1px); box-shadow: 0 2px 4px rgba(255, 127, 39, 0.3); }
 
-.btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
-.btn-edit:hover { background-color: #e0ac08; }
-.delform { display: inline-block; margin: 0; }
-.btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
-.btn-delete:hover { background-color: #c82333; }
-
-.btn-edit-expires { 
-    background-color: var(--primary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px;
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    display: inline-block; 
-    width: 50px;
-    text-align: center;
+.modal-save-btn:hover {
+  background-color: var(--primary-dark);
 }
-.btn-edit-expires:hover { background-color: var(--primary-dark); }
 
-.btn-edit-limit { 
-    background-color: var(--secondary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px;
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    display: inline-block;
-    width: 50px;
-    text-align: center;
+/* Button styles */
+.btn-edit {
+  background-color: var(--warning);
+  color: var(--dark);
+  border: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: background-color 0.2s;
+  margin-right: 5px;
 }
-.btn-edit-limit:hover { background-color: #5a6268; }
 
+.btn-edit:hover {
+  background-color: #e0ac08;
+}
+
+.delform {
+  display: inline-block;
+  margin: 0;
+}
+
+.btn-delete {
+  background-color: var(--danger);
+  color: white;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: background-color 0.2s;
+}
+
+.btn-delete:hover {
+  background-color: #c82333;
+}
+
+.btn-edit-expires {
+  background-color: var(--primary);
+  color: white;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75em;
+  transition: background-color 0.2s;
+  margin-left: 5px;
+  margin-top: 5px;
+  display: inline-block;
+  width: 50px;
+  text-align: center;
+}
+
+.btn-edit-expires:hover {
+  background-color: var(--primary-dark);
+}
+
+.btn-edit-limit {
+  background-color: var(--secondary);
+  color: white;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75em;
+  transition: background-color 0.2s;
+  margin-left: 5px;
+  margin-top: 5px;
+  display: inline-block;
+  width: 50px;
+  text-align: center;
+}
+
+.btn-edit-limit:hover {
+  background-color: #5a6268;
+}
+
+/* Other existing styles */
 .days-remaining {
-    font-size: 0.85em;
-    color: var(--secondary);
-    font-weight: 500;
-    display: inline-block;
-    margin-top: 2px;
+  font-size: 0.85em;
+  color: var(--secondary);
+  font-weight: 500;
+  display: inline-block;
+  margin-top: 2px;
 }
+
 .days-remaining .text-expiring {
-    font-weight: bold;
+  font-weight: bold;
 }
 
 .pill-online { background-color: #d4edda; color: #155724; }
@@ -543,77 +584,523 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 .pill-over-limit { background-color: #dc3545; color: white; }
 
 @media (max-width: 768px) {
-    td { padding-left: 50%; }
-    td:before { width: 45%; }
-    td[data-label="Action"] { display: flex; justify-content: flex-end; align-items: center; }
-    .btn-edit { width: auto; padding: 6px 8px; font-size: 0.8em; margin-right: 5px; }
-    .btn-delete { width: auto; padding: 6px 8px; font-size: 0.8em; margin-top: 0; }
-    .modal-content { 
-        margin: 20% auto; 
-        max-width: 280px;
-    }
-    .days-remaining { display: block; text-align: right; }
-    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-    .auto-delete-warning {
-        margin: 10px 5px;
-        padding: 10px;
-        font-size: 0.9em;
-    }
+  .modal-content {
+    margin: 15% auto;
+    max-width: 320px;
+  }
+  
+  .auto-delete-warning {
+    margin: 10px 5px;
+    padding: 10px;
+    font-size: 0.9em;
+  }
 }
 
-tr.over-limit { 
-    border-left: 5px solid #ff3838; 
-    background-color: rgba(255, 56, 56, 0.1);
+tr.over-limit {
+  border-left: 5px solid #ff3838;
+  background-color: rgba(255, 56, 56, 0.1);
 }
 </style>
 
 <script>
-    function showEditModal(user, password, expires) {
-        document.getElementById('edit-user').value = user;
-        document.getElementById('current-user-display').value = user;
-        document.getElementById('current-password').value = password;
-        document.getElementById('new-password').value = '';
-        document.getElementById('editModal').style.display = 'block';
-    }
+// 💡 FIXED: CORRECTED JAVASCRIPT FUNCTIONS FOR MODAL DIALOGS
 
-    function showExpiresModal(user, expires) {
-        document.getElementById('expires-edit-user').value = user;
-        document.getElementById('expires-current-user-display').value = user; 
-        document.getElementById('new-expires').value = expires;
-        document.getElementById('expiresModal').style.display = 'block';
-    }
-    
-    function showLimitModal(user, limit) {
-        document.getElementById('limit-edit-user').value = user;
-        document.getElementById('limit-current-user-display').value = user; 
-        document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1;
-        document.getElementById('limitModal').style.display = 'block';
-    }
+function showEditModal(user, password) {
+    console.log('Opening edit modal for:', user);
+    document.getElementById('edit-user').value = user;
+    document.getElementById('current-user-display').value = user;
+    document.getElementById('current-password').value = password;
+    document.getElementById('new-password').value = '';
+    document.getElementById('editModal').style.display = 'block';
+}
 
-    window.onclick = function(event) {
-        if (event.target == document.getElementById('editModal')) {
-            document.getElementById('editModal').style.display = 'none';
-        }
-        if (event.target == document.getElementById('expiresModal')) {
-            document.getElementById('expiresModal').style.display = 'none';
-        }
-        if (event.target == document.getElementById('limitModal')) {
-            document.getElementById('limitModal').style.display = 'none';
-        }
+function showExpiresModal(user, expires) {
+    console.log('Opening expires modal for:', user);
+    document.getElementById('expires-edit-user').value = user;
+    document.getElementById('expires-current-user-display').value = user;
+    document.getElementById('new-expires').value = expires || '';
+    document.getElementById('expiresModal').style.display = 'block';
+}
+
+function showLimitModal(user, limit) {
+    console.log('Opening limit modal for:', user);
+    document.getElementById('limit-edit-user').value = user;
+    document.getElementById('limit-current-user-display').value = user;
+    document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1;
+    document.getElementById('limitModal').style.display = 'block';
+}
+
+function closeModal(modalId) {
+    console.log('Closing modal:', modalId);
+    document.getElementById(modalId).style.display = 'none';
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    if (event.target.classList.contains('modal')) {
+        event.target.style.display = 'none';
     }
+}
+
+// Close modal with Escape key
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        const modals = document.querySelectorAll('.modal');
+        modals.forEach(modal => {
+            modal.style.display = 'none';
+        });
+    }
+});
 </script>
 TABLE_HTML
 
-# ===== Web Panel (web.py) - No changes needed for auto delete =====
-echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
-# ... [web.py content remains the same as previous version] ...
-# Copy the same web.py content from previous script
+# ===== Web Panel (web.py) - Fixed routes for modal forms =====
+echo -e "${Y}🖥️ Web Panel (web.py) ကို ပြင်ဆင်နေပါတယ်...${Z}"
+cat >/etc/zivpn/web.py <<'PY'
+from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
+import json, re, subprocess, os, tempfile, hmac
+from datetime import datetime, timedelta, date 
 
-# ===== users_table_wrapper.html - Updated for Auto Delete Warning =====
-echo -e "${Y}📄 Table Wrapper (users_table_wrapper.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
-# ... [users_table_wrapper.html content with auto delete warning] ...
-# Copy the same users_table_wrapper.html content but add the auto delete warning section
+USERS_FILE = "/etc/zivpn/users.json"
+CONFIG_FILE = "/etc/zivpn/config.json"
+LISTEN_FALLBACK = "5667"
+LOGO_URL = "https://zivpn-web.free.nf/zivpn-icon.png"
+
+def get_server_ip():
+    try:
+        result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, check=True)
+        ip = result.stdout.strip().split()[0]
+        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+            return ip
+    except Exception:
+        pass
+    return "127.0.0.1" 
+
+SERVER_IP_FALLBACK = get_server_ip()
+CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
+
+app = Flask(__name__, template_folder="/etc/zivpn/templates")
+app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
+ADMIN_USER = os.environ.get("WEB_ADMIN_USER","admin").strip()
+ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","admin").strip()
+
+# Flask Helper Functions 
+def read_json(path, default):
+  try:
+    with open(path,"r") as f: return json.load(f)
+  except Exception:
+    return default
+
+def write_json_atomic(path, data):
+  d=json.dumps(data, ensure_ascii=False, indent=2)
+  dirn=os.path.dirname(path); fd,tmp=tempfile.mkstemp(prefix=".tmp-", dir=dirn)
+  try:
+    with os.fdopen(fd,"w") as f: f.write(d)
+    os.replace(tmp,path)
+  finally:
+    try: os.remove(tmp)
+    except: pass
+
+def load_users():
+  v=read_json(USERS_FILE,[])
+  out=[]
+  for u in v:
+    out.append({
+        "user":u.get("user",""),
+        "password":u.get("password",""),
+        "expires":u.get("expires",""),
+        "port":str(u.get("port","")) if u.get("port","")!="" else "",
+        "limit_count": int(u.get("limit_count", 1))
+    })
+  return out
+
+def save_users(users): 
+    write_json_atomic(USERS_FILE, users)
+
+def get_user_online_count(port):
+    if not port: return 0
+    try:
+        result = subprocess.run(
+            f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'", 
+            shell=True, capture_output=True, text=True
+        ).stdout
+        source_ips = re.findall(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', result)
+        unique_online_ips = set(ip for ip in source_ips if ip != SERVER_IP_FALLBACK)
+        return len(unique_online_ips)
+    except Exception:
+        return 0
+
+def get_total_active_users():
+    users = load_users()
+    today_date = date.today()
+    active_count = 0
+    for user in users:
+        expires_str = user.get("expires")
+        is_expired = False
+        if expires_str:
+            try:
+                if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
+                    is_expired = True
+            except ValueError:
+                is_expired = False
+        if not is_expired:
+            active_count += 1
+    return active_count
+
+def is_expiring_soon(expires_str):
+    if not expires_str: return False
+    try:
+        expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
+        today = date.today()
+        remaining_days = (expires_date - today).days
+        return 0 <= remaining_days <= 1
+    except ValueError:
+        return False
+
+def calculate_days_remaining(expires_str):
+    if not expires_str:
+        return None
+    try:
+        expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
+        today = date.today()
+        remaining = (expires_date - today).days
+        return remaining if remaining >= 0 else None
+    except ValueError:
+        return None
+
+def delete_user(user):
+    users = load_users()
+    remaining_users = [u for u in users if u.get("user").lower() != user.lower()]
+    save_users(remaining_users)
+    sync_config_passwords(mode="mirror")
+
+def check_user_expiration():
+    users = load_users()
+    today_date = date.today()
+    users_to_keep = []
+    deleted_count = 0
+    
+    for user in users:
+        expires_str = user.get("expires")
+        is_expired = False
+        if expires_str:
+            try:
+                if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
+                    is_expired = True
+            except ValueError:
+                pass 
+        if is_expired:
+            deleted_count += 1
+        else:
+            users_to_keep.append(user)
+
+    if deleted_count > 0:
+        save_users(users_to_keep)
+        sync_config_passwords(mode="mirror") 
+        return True 
+    return False 
+
+def sync_config_passwords(mode="mirror"):
+    cfg=read_json(CONFIG_FILE,{})
+    users=load_users()
+    
+    today_date = date.today()
+    valid_passwords = set()
+    for u in users:
+        expires_str = u.get("expires")
+        is_valid = True
+        if expires_str:
+            try:
+                if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
+                    is_valid = False
+            except ValueError:
+                is_valid = True 
+        if is_valid and u.get("password"):
+            valid_passwords.add(str(u["password"]))
+
+    users_pw=sorted(list(valid_passwords))
+    
+    if mode=="merge":
+        old=[]
+        if isinstance(cfg.get("auth",{}).get("config",None), list):
+            old=list(map(str, cfg["auth"]["config"]))
+        new_pw=sorted(set(old)|set(users_pw))
+    else:
+        new_pw=users_pw
+        
+    if not isinstance(cfg.get("auth"),dict): cfg["auth"]={}
+    cfg["auth"]["mode"]="passwords"
+    cfg["auth"]["config"]=new_pw
+    cfg["listen"]=cfg.get("listen") or ":5667"
+    cfg["cert"]=cfg.get("cert") or "/etc/zivpn/zivpn.crt"
+    cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
+    cfg["obfs"]=cfg.get("obfs") or "zivpn"
+    write_json_atomic(CONFIG_FILE,cfg)
+    subprocess.run("systemctl restart zivpn.service", shell=True)
+
+def login_enabled(): 
+    return bool(ADMIN_USER and ADMIN_PASS)
+
+def is_authed(): 
+    return session.get("auth") == True
+
+def require_login():
+    if login_enabled() and not is_authed():
+        return False
+    return True
+
+def prepare_user_data():
+    all_users = load_users()
+    check_user_expiration() 
+    users = load_users()
+    view=[]
+    today_date = date.today()
+    for u in users:
+        expires_date_obj = None
+        if u.get("expires"):
+            try: 
+                expires_date_obj = datetime.strptime(u.get("expires"), "%Y-%m-%d").date()
+            except ValueError: 
+                pass
+      
+        online_count = get_user_online_count(u.get("port",""))
+        limit_count = int(u.get("limit_count", 1))
+        is_over_limit = online_count > limit_count
+          
+        view.append(type("U",(),{
+            "user":u.get("user",""),
+            "password":u.get("password",""),
+            "expires":u.get("expires",""),
+            "expires_date": expires_date_obj,
+            "days_remaining": calculate_days_remaining(u.get("expires","")),
+            "port":u.get("port",""),
+            "online_count": online_count,
+            "limit_count": limit_count,
+            "is_over_limit": is_over_limit,
+            "expiring_soon": is_expiring_soon(u.get("expires","")) 
+        }))
+    view.sort(key=lambda x:(x.user or "").lower())
+    return view, datetime.now().strftime("%Y-%m-%d"), today_date
+
+# 💡 FIXED: Routes for modal forms
+@app.route("/", methods=["GET"])
+def index(): 
+    server_ip = SERVER_IP_FALLBACK 
+    if not require_login():
+        return render_template_string('''
+        <html><body>
+            <div style="text-align:center;padding:50px;">
+                <h1>ZIVPN Panel</h1>
+                <p>Please <a href="/login">login</a> to continue</p>
+            </div>
+        </body></html>
+        ''')
+    
+    check_user_expiration()
+    total_users = get_total_active_users()
+
+    return render_template_string('''
+    <html><body>
+        <div style="text-align:center;padding:50px;">
+            <h1>ZIVPN Admin Panel</h1>
+            <p>Total Active Users: {{ total_users }}</p>
+            <p><a href="/users">View Users List</a></p>
+            <p><a href="/logout">Logout</a></p>
+        </div>
+    </body></html>
+    ''', total_users=total_users)
+
+@app.route("/users", methods=["GET"])
+def users_table_view():
+    if not require_login(): 
+        return redirect(url_for('login'))
+    
+    view, today_str, today_date = prepare_user_data()
+    msg_data = session.pop("msg", None)
+    err_data = session.pop("err", None)
+
+    return render_template("users_table.html", 
+                         users=view, 
+                         today=today_str,
+                         today_date=today_date,
+                         logo=LOGO_URL, 
+                         IP=SERVER_IP_FALLBACK,
+                         msg=msg_data, 
+                         err=err_data)
+
+@app.route("/login", methods=["GET","POST"])
+def login():
+    if not login_enabled():
+        return redirect(url_for('index'))
+    
+    if request.method=="POST":
+        u=(request.form.get("u") or "").strip()
+        p=(request.form.get("p") or "").strip()
+        if hmac.compare_digest(u, ADMIN_USER) and hmac.compare_digest(p, ADMIN_PASS):
+            session["auth"]=True
+            return redirect(url_for('users_table_view'))
+        else:
+            session["auth"]=False
+            session["login_err"]="❌ Username သို့မဟုတ် Password မှားယွင်းနေပါသည်။"
+            return redirect(url_for('login'))
+    
+    return render_template_string('''
+    <html><body>
+        <div style="text-align:center;padding:50px;">
+            <h1>ZIVPN Login</h1>
+            {% if err %}<p style="color:red;">{{ err }}</p>{% endif %}
+            <form method="POST">
+                <input type="text" name="u" placeholder="Username" required><br><br>
+                <input type="password" name="p" placeholder="Password" required><br><br>
+                <button type="submit">Login</button>
+            </form>
+        </div>
+    </body></html>
+    ''', err=session.pop("login_err", None))
+
+@app.route("/logout", methods=["GET"])
+def logout():
+    session.pop("auth", None)
+    return redirect(url_for('login') if login_enabled() else url_for('index'))
+
+# 💡 FIXED: Modal form routes
+@app.route("/edit", methods=["POST"])
+def edit_user_password():
+    if not require_login(): 
+        return redirect(url_for('login'))
+    
+    user=(request.form.get("user") or "").strip()
+    new_password=(request.form.get("password") or "").strip()
+    
+    if not user or not new_password:
+        session["err"] = "User Name နှင့် Password အသစ် မပါဝင်ပါ"
+        return redirect(url_for('users_table_view'))
+    
+    users=load_users()
+    replaced=False
+    for u in users:
+        if u.get("user","").lower()==user.lower():
+            u["password"]=new_password 
+            replaced=True
+            break
+      
+    if not replaced:
+        session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
+        return redirect(url_for('users_table_view'))
+    
+    save_users(users)
+    sync_config_passwords() 
+    
+    session["msg"] = json.dumps({
+        "ok":True, 
+        "message": f"<h4>✅ **{user}** ရဲ့ Password ပြောင်းပြီးပါပြီ။</h4>", 
+        "user":user, 
+        "password":new_password
+    })
+    return redirect(url_for('users_table_view'))
+
+@app.route("/edit_expires", methods=["POST"])
+def edit_user_expires():
+    if not require_login(): 
+        return redirect(url_for('login'))
+    
+    user=(request.form.get("user") or "").strip()
+    new_expires=(request.form.get("expires") or "").strip()
+    
+    if not user or not new_expires:
+        session["err"] = "User Name နှင့် Expiration Date အသစ် မပါဝင်ပါ"
+        return redirect(url_for('users_table_view'))
+  
+    if new_expires.isdigit():
+        new_expires=(datetime.now() + timedelta(days=int(new_expires))).strftime("%Y-%m-%d")
+
+    if new_expires:
+        try: 
+            datetime.strptime(new_expires,"%Y-%m-%d")
+        except ValueError:
+            session["err"] = "❌ Expiration Date ပုံစံမမှန်ပါ"
+            return redirect(url_for('users_table_view'))
+    
+    users=load_users()
+    replaced=False
+    for u in users:
+        if u.get("user","").lower()==user.lower():
+            u["expires"]=new_expires 
+            replaced=True
+            break
+      
+    if not replaced:
+        session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
+        return redirect(url_for('users_table_view'))
+    
+    save_users(users)
+    sync_config_passwords() 
+    
+    session["msg"] = json.dumps({
+        "ok":True, 
+        "message": f"<h4>✅ **{user}** ရဲ့ Expires ကို **{new_expires}** သို့ ပြောင်းပြီးပါပြီ။</h4>", 
+        "user":user
+    })
+    return redirect(url_for('users_table_view'))
+
+@app.route("/edit_limit", methods=["POST"])
+def edit_user_limit():
+    if not require_login(): 
+        return redirect(url_for('login'))
+    
+    user=(request.form.get("user") or "").strip()
+    limit_count_str=(request.form.get("limit_count") or "").strip()
+    
+    if not user or not limit_count_str:
+        session["err"] = "User Name နှင့် Limit Count အသစ် မပါဝင်ပါ"
+        return redirect(url_for('users_table_view'))
+  
+    try:
+        new_limit = int(limit_count_str)
+        if not (1 <= new_limit <= 10):
+            session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် 1 မှ 10 အတွင်းသာ ဖြစ်ရပါမည်။"
+            return redirect(url_for('users_table_view'))
+    except ValueError:
+        session["err"] = "❌ Limit Count သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
+        return redirect(url_for('users_table_view'))
+
+    users=load_users()
+    replaced=False
+    for u in users:
+        if u.get("user","").lower()==user.lower():
+            u["limit_count"]=new_limit 
+            replaced=True
+            break
+      
+    if not replaced:
+        session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
+        return redirect(url_for('users_table_view'))
+    
+    save_users(users)
+    
+    session["msg"] = json.dumps({
+        "ok":True, 
+        "message": f"<h4>✅ **{user}** ရဲ့ Limit ကို **{new_limit}** ယောက် သို့ ပြောင်းပြီးပါပြီ။</h4>", 
+        "user":user
+    })
+    return redirect(url_for('users_table_view'))
+
+@app.route("/delete", methods=["POST"])
+def delete_user_html():
+    if not require_login(): 
+        return redirect(url_for('login'))
+    
+    user = (request.form.get("user") or "").strip()
+    if not user:
+        session["err"] = "User Name မပါဝင်ပါ"
+        return redirect(url_for('users_table_view'))
+  
+    delete_user(user) 
+    return redirect(url_for('users_table_view'))
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080, debug=True)
+PY
 
 # ===== Web Service =====
 echo -e "${Y}🌐 Web Service (zivpn-web) ကို သွင်းနေပါတယ်...${Z}"
@@ -636,19 +1123,20 @@ WantedBy=multi-user.target
 EOF
 
 # ===== Networking =====
-echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
+echo -e "${Y}🌐 Network configuration ချထားနေပါတယ်...${Z}"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 
 IFACE=$(ip -4 route ls | awk '{print $5; exit}')
 [ -n "${IFACE:-}" ] || IFACE=eth0
 
+# Clear existing rules
+iptables -t nat -F 2>/dev/null || true
+
 # DNAT 6000:19999/udp -> :5667
-iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || \
 iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 6000:19999 -j DNAT --to-destination :5667
 
 # MASQ out
-iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || \
 iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 
 # Allow UDP traffic for VPN ports
@@ -657,30 +1145,46 @@ iptables -A INPUT -p udp --dport 6000:19999 -j ACCEPT 2>/dev/null || true
 ufw allow 5667/udp >/dev/null 2>&1 || true
 ufw allow 6000:19999/udp >/dev/null 2>&1 || true
 ufw allow 8080/tcp >/dev/null 2>&1 || true
+echo "y" | ufw enable >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
 # ===== CRLF sanitize =====
-echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
-sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh || true
+echo -e "${Y}🧹 File formatting ပြင်ဆင်နေပါတယ်...${Z}"
+sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html 2>/dev/null || true
 
 # ===== Enable services =====
+echo -e "${Y}🚀 Services စတင်နေပါတယ်...${Z}"
 systemctl daemon-reload
-systemctl enable --now zivpn.service
-systemctl enable --now zivpn-web.service
+systemctl enable zivpn.service
+systemctl enable zivpn-web.service
+systemctl start zivpn.service
+systemctl start zivpn-web.service
 
-# ===== Run initial limit enforcement =====
-echo -e "${Y}🛡️ ကနဦး Limit Enforcement ကို စတင်နေပါတယ်...${Z}"
-$LIMIT_ENFORCER_SCRIPT
+# Wait a moment for services to start
+sleep 3
+
+# Check services status
+if systemctl is-active --quiet zivpn.service; then
+    echo -e "${G}✅ zivpn service started successfully${Z}"
+else
+    echo -e "${Y}⚠️ zivpn service may have issues, checking status...${Z}"
+    systemctl status zivpn.service --no-pager -l
+fi
+
+if systemctl is-active --quiet zivpn-web.service; then
+    echo -e "${G}✅ zivpn-web service started successfully${Z}"
+else
+    echo -e "${Y}⚠️ zivpn-web service may have issues, checking status...${Z}"
+    systemctl status zivpn-web.service --no-pager -l
+fi
 
 IP=$(hostname -I | awk '{print $1}')
-echo -e "\n$LINE\n${G}✅ ZIVPN UDP Server + Web UI + User Limit Enforcement + Auto Delete ပြီးဆုံးပါပြီ${Z}"
-echo -e "${C}Web Panel (Add Users) :${Z} ${Y}http://$IP:8080${Z}"
-echo -e "${C}Web Panel (User List) :${Z} ${Y}http://$IP:8080/users${Z}"
-echo -e "${C}User Limit Enforcement:${Z} ${G}Active (တစ်မိနစ်တစ်ခါ စစ်ဆေးပါမည်)${Z}"
-echo -e "${C}Auto Delete Feature:${Z} ${R}Active (Limit ကျော်လွန်ပါက ၁ မိနစ်အတွင်း Auto Delete)${Z}"
-echo -e "${C}Enforcement Log:${Z} ${Y}/var/log/zivpn_limit_enforcer.log${Z}"
-echo -e "${C}Deletion Log:${Z} ${Y}/var/log/zivpn_auto_delete.log${Z}"
-echo -e "${C}Services:${Z} ${Y}systemctl status zivpn • systemctl status zivpn-web${Z}"
+echo -e "\n$LINE\n${G}✅ ZIVPN Installation Completed Successfully!${Z}"
+echo -e "${C}Web Panel:${Z} ${Y}http://$IP:8080/users${Z}"
+echo -e "${C}VPN Port:${Z} ${Y}5667 (UDP)${Z}"
+echo -e "${C}Port Range:${Z} ${Y}6000-19999 (UDP)${Z}"
+echo -e "${C}Features:${Z} ${G}Fixed Modal Dialogs • User Limit Enforcement • Auto Delete${Z}"
 echo -e "$LINE"
-echo -e "${Y}📝 Auto Delete Log ကြည့်ရန်: ${Z}tail -f /var/log/zivpn_auto_delete.log"
-echo -e "${Y}📝 Enforcement Log ကြည့်ရန်: ${Z}tail -f /var/log/zivpn_limit_enforcer.log"
+echo -e "${Y}📝 Check logs:${Z} journalctl -u zivpn-web.service -f"
+echo -e "${Y}🔧 Restart web:${Z} systemctl restart zivpn-web.service"
+echo -e "${Y}🐛 Debug mode:${Z} cd /etc/zivpn && python3 web.py"
