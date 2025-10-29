@@ -1878,15 +1878,9 @@ echo -e "\n${ORANGE}🛡️ ကနဦး Limit Enforcement ကို စတင�
 $LIMIT_ENFORCER_SCRIPT
 echo -e "${GREEN}✅ ကနဦး Limit Enforcement ပြီးဆုံးပါပြီ။ (Log ကို /var/log/zivpn_limit_enforcer.log တွင် စစ်ဆေးနိုင်သည်)${NC}"
 
-# --- FINAL MESSAGE BLOCK (Modified for guaranteed output) ---
-sleep 1 
-sync
 
 IP=$(hostname -I | awk '{print $1}')
-
-# Final output block ကို /dev/tty သို့ တိုက်ရိုက်ပို့ခိုင်းခြင်း
-{
-echo -e "\n$LINE"
+echo -e "\n$LINE\n${G}✅ Done${Z}"
 echo -e "${GREEN}✅ ZIVPN UDP Server + Web UI + User Limit Auto-Delete Enforcement ပြီးဆုံးပါပြီ${NC}"
 echo -e "${ORANGE}Web Panel (Add Users) : http://$IP:8080${NC}"
 echo -e "${ORANGE}Web Panel (User List) : http://$IP:8080/users${NC}"
@@ -1895,7 +1889,3 @@ echo -e "${YELLOW}User Limit Enforcement: Active (တစ်မိနစ်တစ
 echo -e "${YELLOW}Auto-Delete Log File: /var/log/zivpn_auto_delete.log${NC}"
 echo -e "${YELLOW}Services Status: systemctl status zivpn • systemctl status zivpn-web${NC}"
 echo -e "$LINE"
-} > /dev/tty # output ကို terminal (tty) သို့ တိုက်ရိုက်ပို့ခိုင်းခြင်း
-
-stty sane # terminal settings ကို ပြန်ပြင်ပေးခြင်း
-sleep 1 # buffer flush ပြီးဆုံးဖို့ အချိန်ထပ်ပေးခြင်း
