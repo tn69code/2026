@@ -240,6 +240,7 @@ sync_and_restart_zivpn() {
             if . == null or . == "" then 
                 true 
             else 
+                # Check if expires date is >= today's date
                 (strptime("%Y-%m-%d") | if . >= now | todate | strptime("%Y-%m-%d")) then true else false end
             end) | 
         .password' | grep -v 'null')
@@ -308,6 +309,7 @@ if [ -f "$USERS_FILE" ]; then
                 # User is within limit - Unblock and keep
                 # unblock_port call will log rule deletion if it was blocked
                 unblock_port "$port" "$username"
+                # Use a temporary variable to hold the user data as a JSON string to ensure proper jq merging
                 USERS_TO_KEEP_JSON=$(echo "$USERS_TO_KEEP_JSON" | jq ". + [$(echo "$user_data" | jq '.|tostring')|fromjson]")
             fi
         else
@@ -1770,7 +1772,7 @@ def api_users():
     users=load_users(); replaced=False
     for u in users:
       if u.get("user","").lower()==user.lower():
-        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break
+        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; break
     if not replaced:
       if not port:
           port = pick_free_port()
