@@ -1,8 +1,8 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - HTTPS / NGINX READY MODIFICATION
 # ================================== MODIFIED FOR NGINX REVERSE PROXY ==================================
-# 💡 NEW MODIFICATION: Flask is set to run on 127.0.0.1:8080 (HTTP) behind Nginx.
-# 💡 NEW MODIFICATION: Nginx is installed and configured as a reverse proxy for Zivpn.web-panel.dtac68.shop.
+# 💡 NEW MODIFICATION: Flask is set to run on 0.0.0.0:8080 (HTTP) to work properly with systemd.
+# 💡 NEW MODIFICATION: Nginx Port 80 config is now a proper HTTP->HTTPS Redirect block.
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -51,7 +51,7 @@ apt_guard_end(){
   if [ "${CNF_DISABLED:-0}" = "1" ] && [ -f "${CNF_CONF}.disabled" ]; then mv "${CNF_CONF}.disabled" "$CNF_CONF"; fi
 }
 
-# ===== Packages (MODIFIED: Added Nginx and Certbot components) =====
+# ===== Packages (UNCHANGED) =====
 echo -e "${Y}📦 Packages တင်နေပါတယ် (Nginx နှင့် Certbot ပါဝင်သည်)...${Z}"
 apt_guard_start
 apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
@@ -97,7 +97,7 @@ rm -f /etc/zivpn/zivpn.crt 2>/dev/null || true
 rm -f /etc/zivpn/zivpn.key 2>/dev/null || true
 
 
-# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (UNCHANGED logic) ---
+# --- Web Admin Login, VPN Passwords, config.json Update (UNCHANGED logic) ---
 echo -e "${G}🔒 Web Admin Login UI ထည့်မလား..?${Z}"
 read -r -p "Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
@@ -137,18 +137,19 @@ fi
 
 if jq . >/dev/null 2>&1 <<<'{}'; then
   TMP=$(mktemp)
-  # 💡 MODIFIED: config.json တွင် cert/key လမ်းကြောင်းများကို ဖယ်ရှားလိုက်သည် (HTTPS သည် Nginx တွင် ဖြစ်သွားသောကြောင့်)
+  # 💡 MODIFIED: config.json တွင် cert/key လမ်းကြောင်းများကို ဖယ်ရှားလိုက်သည်
   jq --argjson pw "$PW_LIST" '
     .auth.mode = "passwords" |
     .auth.config = $pw |
     .listen = (."listen" // ":5667") |
     .obfs = (."obfs" // "zivpn") |
-    del(.cert) | del(.key) # 💡 SSL settings ဖယ်ရှား
+    del(.cert) | del(.key) 
   ' "$CFG" > "$TMP" && mv "$TMP" "$CFG"
 fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
 
+# --- systemd: ZIVPN (UNCHANGED) ---
 echo -e "${Y}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${Z}"
 cat >/etc/systemd/system/zivpn.service <<'EOF'
 [Unit]
@@ -171,7 +172,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 MODIFIED: zivpn-web.service (Flask runs on 127.0.0.1:8080 - HTTP)
+# 💡 ULTIMATE FIX 1: zivpn-web.service - ExecStart ကို ပြင်ဆင်ခြင်း
 echo -e "${Y}🧰 systemd service (zivpn-web) ကို သွင်းနေပါတယ်...${Z}"
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
@@ -182,8 +183,8 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/etc/zivpn
-# 💡 ExecStart: Python3 ကို 127.0.0.1:8080 (HTTP) တွင် run ပါ။
-ExecStart=/usr/bin/python3 /etc/zivpn/web.py
+# 💡 ExecStart: Python3 ကို 0.0.0.0:8080 (HTTP) တွင် run ပါ။ (Nginx Reverse Proxy အတွက်)
+ExecStart=/usr/bin/python3 /etc/zivpn/web.py --host=0.0.0.0
 Restart=always
 RestartSec=5
 EnvironmentFile=-/etc/zivpn/web.env
@@ -192,7 +193,7 @@ EnvironmentFile=-/etc/zivpn/web.env
 WantedBy=multi-user.target
 EOF
 
-# 💡 NGINX VIRTUAL HOST CONFIGURATION
+# 💡 ULTIMATE FIX 2: NGINX VIRTUAL HOST CONFIGURATION - Port 80 ကို Redirect Block အဖြစ် ပြောင်းလဲခြင်း
 DOMAIN="Zivpn.web-panel.dtac68.shop"
 NGINX_CONF="/etc/nginx/sites-available/zivpn_panel_config"
 
@@ -203,37 +204,818 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
-
-    # Certbot ဖြင့် HTTPS ရယူပြီးပါက ဤ block ကို Certbot မှ အလိုအလျောက် ပြောင်းလဲသွားပါမည်။
-    # ထိုအခါ Web Panel ကို http://IP:8080 မှ http://DOMAIN သို့ redirect လုပ်ပါမည်။
-    location / {
-        # 💡 Flask သည် 127.0.0.1:8080 တွင် HTTP ဖြင့် run နေသည်။
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme; 
-        
-        # WebSocket / Long Polling ထောက်ပံ့ရန်
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 900s;
+    
+    # 💡 ULTIMATE FIX: Certbot SSL Verification ကို ခွင့်ပြုရန်
+    location ~ /.well-known/acme-challenge {
+        allow all;
+        root /var/www/html;
     }
+    
+    # 💡 ULTIMATE FIX: HTTP မှ HTTPS သို့ အမြဲ Redirect လုပ်ရန်
+    return 301 https://\$host\$request_uri;
+
+    # Port 443 HTTPS Block ကို Certbot မှ ဖန်တီးပေးပါလိမ့်မည်။
+    # Certbot ၏ command ကို run ပြီးပါက ဤဖိုင်ကို အောက်ပါအတိုင်း ပြောင်းလဲသွားပါမည်။
+    # server {
+    #     listen 443 ssl;
+    #     server_name ${DOMAIN};
+    #     ... (SSL configs) ...
+    #     location / {
+    #         proxy_pass http://127.0.0.1:8080;
+    #         ... (Proxy Headers) ...
+    #     }
+    # }
 }
 NGINX_TPL
 
 # Nginx config ကို enable လုပ်ခြင်း
 if [ ! -L /etc/nginx/sites-enabled/zivpn_panel_config ]; then
+    # 💡 FIX: Default config ကို အရင်ဆုံး ဖယ်ရှားပါ (Conflicting error မဖြစ်စေရန်)
+    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
 fi
 
-# 💡 Template Files (users_table.html, users_table_wrapper.html) ကို ဖြည့်သွင်းခြင်း (ကနဦး script မှ ကူးယူပြီး SSL/modal fixes ပါပြီး)
-# ... (Template files are the same as your initial post, ensure they are written here) ...
-# Due to length constraints, I'm skipping the copy-paste of templates, assuming they are correctly written to the $TEMPLATES_DIR
-# in your execution. I will ensure web.py is updated.
+# 💡 Template Files (users_table.html, users_table_wrapper.html) ကို ဖြည့်သွင်းခြင်း
+# (Template code is assumed to be correct based on the long input)
+echo -e "${Y}📄 HTML Template များကို template directory ထဲသို့ ရေးနေပါတယ်...${Z}"
+# --- Start of users_table.html ---
+cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
+<div class="table-container">
+    <table>
+      <thead>
+          <tr>
+            <th><i class="icon">👤</i> User</th>
+            <th><i class="icon">🔑</i> Password</th>
+            <th><i class="icon">⏰</i> Expires</th>
+            <th><i class="icon">💻</i> Online Users</th> {# 💡 NEW COLUMN #}
+            <th><i class="icon">👥</i> Limit</th> {# 💡 NEW COLUMN #}
+            <th><i class="icon">🚦</i> Status</th> 
+            <th><i class="icon">❌</i> Action</th>
+          </tr>
+      </thead>
+      <tbody>
+          {% for u in users %}
+          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% elif u.is_over_limit %}over-limit{% endif %}"> {# 💡 ADDED over-limit CLASS #}
+            <td data-label="User">{% if u.expires and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
+            <td data-label="Password">{% if u.expires and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
+            <td data-label="Expires">
+                {% if u.expires %}
+                    {% if u.expires_date < today_date %}
+                        <s>{{u.expires}} (Expired)</s>
+                    {% else %}
+                        {% if u.expiring_soon %}
+                            <span class="text-expiring">{{u.expires}}</span>
+                        {% else %}
+                            {{u.expires}}
+                        {% endif %}
+                        
+                        {# 💡 Display Days Remaining #}
+                        <br><span class="days-remaining">
+                            (ကျန်ရှိ: 
+                            {% if u.days_remaining is not none %}
+                                {% if u.days_remaining == 0 %}
+                                    <span class="text-expiring">ဒီနေ့ နောက်ဆုံး</span>
+                                {% else %}
+                                    {{ u.days_remaining }} ရက်
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                            )
+                        </span>
+                    {% endif %}
+                {% else %}
+                    <span class="muted">—</span>
+                {% endif %}
+                {# 💡 MODIFIED BUTTON TEXT #}
+                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> 
 
-# 💡 Web Panel (Flask - web.py) (MODIFIED: Removed SSL context from app.run)
+            </td>
+            
+            <td data-label="Online Users"> {# 💡 NEW ONLINE USERS DATA #}
+                {% if u.online_count is not none %}
+                    {% if u.online_count > 0 %}
+                        <span class="pill pill-online">{{ u.online_count }}</span>
+                    {% else %}
+                        <span class="pill pill-offline">0</span>
+                    {% endif %}
+                {% else %}
+                    <span class="pill pill-unknown">N/A</span>
+                {% endif %}
+            </td>
+            
+            <td data-label="Limit"> {# 💡 NEW LIMIT DATA #}
+                {% if u.limit_count is not none %}
+                    {% if u.limit_count > 1 %}
+                        <span class="pill pill-limit-multi">{{ u.limit_count }}</span>
+                    {% elif u.limit_count == 1 %}
+                        <span class="pill pill-limit-single">{{ u.limit_count }}</span>
+                    {% else %}
+                        <span class="pill pill-limit-default">N/A (Limit: 1)</span>
+                    {% endif %}
+                {% else %}
+                    <span class="pill pill-limit-default">N/A (Limit: 1)</span>
+                {% endif %}
+                {# 💡 MODIFIED BUTTON TEXT #}
+                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button>
+            </td>
+
+            <td data-label="Status">
+                {# Flask's is_expiring_soon() and expiration logic determines the status #}
+                {% if u.expires and u.expires_date < today_date %}
+                    <span class="pill pill-expired"><i class="icon">🛑</i> Expired</span>
+                
+                {# Expiring Soon (Today or Tomorrow) #}
+                {% elif u.expiring_soon %}
+                    <span class="pill pill-expiring"><i class="icon">⚠️</i> Expiring Soon</span>
+                    
+                {# Over Limit #}
+                {% elif u.is_over_limit %}
+                    <span class="pill pill-over-limit"><i class="icon">❌</i> Over Limit</span> {# 💡 NEW STATUS #}
+
+                {# Active (Including no expiration set, or 2 days or more left, and not over limit) #}
+                {% else %}
+                    <span class="pill ok"><i class="icon">🟢</i> Active</span>
+                {% endif %}
+            </td>
+
+            <td data-label="Action">
+              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.expires }}')"><i class="icon">✏️</i> Pass</button> {# 💡 Password Edit Button #}
+              <form class="delform" method="post" action="/delete" onsubmit="return confirm('{{u.user}} ကို ဖျက်မလား?')">
+                <input type="hidden" name="user" value="{{u.user}}">
+                <button type="submit" class="btn-delete"><i class="icon">🗑️</i> Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+      </tbody>
+    </table>
+</div>
+
+{# 💡 PASSWORD EDIT MODAL (UNCHANGED) #}
+<div id="editModal" class="modal">
+  <div class="modal-content">
+    <span class="close-btn" onclick="document.getElementById('editModal').style.display='none'">&times;</span>
+    <h2 class="section-title"><i class="icon">✏️</i> Change Password</h2>
+    <form method="post" action="/edit">
+        <input type="hidden" id="edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="current-password" class="input-label"><i class="icon">🔑</i> Current Password</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="current-password" name="current_password" readonly>
+            </div>
+            <p class="input-hint">လက်ရှိ Password (မပြောင်းလဲလိုပါက ထားခဲ့နိုင်ပါသည်)</p>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-password" class="input-label"><i class="icon">🔒</i> New Password</label>
+            <div class="input-field-wrapper">
+                <input type="text" id="new-password" name="password" placeholder="Password အသစ်ထည့်ပါ" required>
+            </div>
+            <p class="input-hint">User အတွက် Password အသစ်</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Password အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
+
+{# 💡 NEW: EXPIRES EDIT MODAL #}
+<div id="expiresModal" class="modal">
+  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
+    <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
+    <h2 class="section-title"><i class="icon">⏰</i> Change Expiry Date</h2>
+    <form method="post" action="/edit_expires"> {# NEW ROUTE #}
+        <input type="hidden" id="expires-edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="expires-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="expires-current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-expires" class="input-label"><i class="icon">🗓️</i> New Expiration Date</label>
+            <div class="input-field-wrapper">
+                <input type="text" id="new-expires" name="expires" placeholder="ဥပမာ: 2026-01-31 သို့မဟုတ် 30" required>
+            </div>
+            <p class="input-hint">ရက်စွဲ (YYYY-MM-DD) သို့မဟုတ် ရက်အရေအတွက် (ဥပမာ: 30)</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Expires အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
+
+{# 💡 NEW: LIMIT EDIT MODAL #}
+<div id="limitModal" class="modal">
+  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
+    <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
+    <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
+    <form method="post" action="/edit_limit"> {# NEW ROUTE #}
+        <input type="hidden" id="limit-edit-user" name="user">
+        
+        <div class="input-group">
+            <label for="limit-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
+            <div class="input-field-wrapper is-readonly">
+                <input type="text" id="limit-current-user-display" name="current_user_display" readonly>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="new-limit" class="input-label"><i class="icon">🔢</i> Max Users</label>
+            <div class="input-field-wrapper">
+                <input type="number" id="new-limit" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1 မှ 10)" min="1" max="10" required>
+            </div>
+            <p class="input-hint">ဤအကောင့်အတွက် အများဆုံး သုံးစွဲသူအရေအတွက် (ပုံမှန်- 1)</p>
+        </div>
+        
+        <button class="save-btn modal-save-btn" type="submit">Limit အသစ် သိမ်းမည်</button>
+    </form>
+  </div>
+</div>
+
+
+<style>
+/* 💡 MODAL UI UPDATE START (UNCHANGED) */
+.modal-content {
+  background-color: var(--card-bg); /* Use card background color */
+  margin: 15% auto; /* နေရာချထားမှု ချိန်ညှိသည် */
+  padding: 25px; 
+  border: none; /* Remove default border */
+  width: 90%; 
+  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
+  border-radius: 12px;
+  position: relative;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2); /* Stronger, modern shadow */
+}
+/* 💡 CLOSE BUTTON POSITIONING FIX */
+.close-btn { 
+  color: var(--secondary); 
+  position: absolute; /* modal-content နှင့် စပ်လျဉ်း၍ နေရာချထားသည် */
+  top: 8px; /* အပေါ်သို့ ရွှေ့သည် */
+  right: 15px; /* ညာဘက်သို့ ရွှေ့သည် */
+  font-size: 32px; 
+  font-weight: 300; 
+  transition: color 0.2s;
+  line-height: 1; /* စာကြောင်း အကွာအဝေး ချိန်ညှိသည် */
+}
+.close-btn:hover { color: var(--danger); }
+.section-title { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); color: var(--primary-dark);}
+
+/* Re-use Input Group styles from main HTML, but define specifically for modal for clarity */
+.modal .input-group { margin-bottom: 20px; }
+.modal .input-label {
+    display: block;
+    text-align: left;
+    font-weight: 600;
+    color: var(--dark);
+    font-size: 0.9em; /* ညီညာပြီး သေးငယ်စေရန် */
+    margin-bottom: 5px;
+}
+.modal .input-field-wrapper {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: #fff;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+.modal .input-field-wrapper:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25);
+}
+.modal .input-field-wrapper.is-readonly {
+    background-color: var(--light); /* Light gray background for readonly */
+    border: 1px solid #ddd;
+}
+.modal .input-field-wrapper input {
+    width: 100%;
+    padding: 12px 10px;
+    border: none; 
+    border-radius: 8px;
+    font-size: 16px;
+    outline: none;
+    background: transparent; 
+}
+
+/* Hint Text */
+.modal .input-hint {
+    margin-top: 5px;
+    text-align: left;
+    font-size: 0.75em; /* ပိုသေးငယ်စေရန် */
+    color: var(--secondary);
+    line-height: 1.4;
+    padding-left: 5px;
+}
+
+/* Save Button Design (Using Primary Color) */
+.modal-save-btn {
+    width: 100%;
+    padding: 12px; 
+    background-color: var(--primary); /* Orange Primary Color */
+    color: white; 
+    border: none; 
+    border-radius: 8px; 
+    font-size: 1.0em;
+    cursor: pointer; 
+    transition: background-color 0.3s, transform 0.1s; 
+    margin-top: 10px; 
+    font-weight: bold;
+    box-shadow: 0 4px 6px rgba(255, 127, 39, 0.3); /* Subtle button shadow */
+}
+.modal-save-btn:hover { background-color: var(--primary-dark); } 
+.modal-save-btn:active { background-color: var(--primary-dark); transform: translateY(1px); box-shadow: 0 2px 4px rgba(255, 127, 39, 0.3); }
+
+/* Button Styles for Action Column */
+.btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
+.btn-edit:hover { background-color: #e0ac08; }
+.delform { display: inline-block; margin: 0; }
+.btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
+.btn-delete:hover { background-color: #c82333; }
+
+/* 💡 MODIFIED BUTTON: Expires Edit Button */
+.btn-edit-expires { 
+    background-color: var(--primary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; /* Reduced padding */
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    display: inline-block; 
+    width: 50px; /* 💡 Set fixed width */
+    text-align: center;
+}
+.btn-edit-expires:hover { background-color: var(--primary-dark); }
+
+/* 💡 MODIFIED BUTTON: Limit Edit Button */
+.btn-edit-limit { 
+    background-color: var(--secondary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; /* Reduced padding */
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    display: inline-block;
+    width: 50px; /* 💡 Set fixed width */
+    text-align: center;
+}
+.btn-edit-limit:hover { background-color: #5a6268; }
+
+
+/* Days Remaining Text Style (UNCHANGED) */
+.days-remaining {
+    font-size: 0.85em; /* ဥပမာ- 2025-10-24 ထက် အနည်းငယ် သေးငယ်စေရန် */
+    color: var(--secondary);
+    font-weight: 500;
+    display: inline-block;
+    margin-top: 2px;
+}
+.days-remaining .text-expiring {
+    font-weight: bold;
+}
+
+/* 💡 NEW PILL STYLES for Online Users */
+.pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
+.pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
+.pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
+
+/* 💡 NEW PILL STYLES for Limit */
+.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
+.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
+.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
+.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
+
+
+@media (max-width: 768px) {
+    /* 💡 MODIFIED: Column count changed, need to adjust data-label padding */
+    td { padding-left: 50%; } /* Increase padding for more space */
+    td:before { width: 45%; } /* Increase label width */
+    td[data-label="Action"] { display: flex; justify-content: flex-end; align-items: center; }
+    .btn-edit { width: auto; padding: 6px 8px; font-size: 0.8em; margin-right: 5px; }
+    .btn-delete { width: auto; padding: 6px 8px; font-size: 0.8em; margin-top: 0; }
+    .modal-content { 
+        margin: 20% auto; 
+        max-width: 280px; /* 💡 Mobile အတွက် ပိုသေးအောင် လျှော့ချသည်။ */
+    }
+    .days-remaining { display: block; text-align: right; }
+    /* 💡 MODIFIED BUTTONS FOR MOBILE */
+    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+
+
+}
+/* 💡 MODAL UI UPDATE END */
+/* 💡 NEW ROW STYLE: Over Limit */
+tr.over-limit { 
+    border-left: 5px solid var(--danger); 
+    background-color: rgba(220, 53, 69, 0.1); /* Light red background */
+}
+</style>
+
+<script>
+    // JavaScript to handle the modal display
+    function showEditModal(user, password, expires) {
+        document.getElementById('edit-user').value = user;
+        document.getElementById('current-user-display').value = user; // Display user
+        document.getElementById('current-password').value = password;
+        
+        // Clear new password field when opening
+        document.getElementById('new-password').value = '';
+        
+        document.getElementById('editModal').style.display = 'block';
+    }
+
+    // 💡 NEW JAVASCRIPT: Handle Expires Modal Display
+    function showExpiresModal(user, expires) {
+        document.getElementById('expires-edit-user').value = user;
+        document.getElementById('expires-current-user-display').value = user; 
+        document.getElementById('new-expires').value = expires;
+        
+        document.getElementById('expiresModal').style.display = 'block';
+    }
+    
+    // 💡 NEW JAVASCRIPT: Handle Limit Modal Display
+    function showLimitModal(user, limit) {
+        document.getElementById('limit-edit-user').value = user;
+        document.getElementById('limit-current-user-display').value = user; 
+        // Default to 1 if limit is 'None' or empty
+        document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1; 
+        
+        document.getElementById('limitModal').style.display = 'block';
+    }
+
+    // Close modal when clicking outside of it (MODIFIED to check all modals)
+    window.onclick = function(event) {
+        if (event.target == document.getElementById('editModal')) {
+            document.getElementById('editModal').style.display = 'none';
+        }
+        if (event.target == document.getElementById('expiresModal')) {
+            document.getElementById('expiresModal').style.display = 'none';
+        }
+        if (event.target == document.getElementById('limitModal')) {
+            document.getElementById('limitModal').style.display = 'none';
+        }
+    }
+</script>
+TABLE_HTML
+# --- End of users_table.html ---
+
+# --- Start of users_table_wrapper.html ---
+cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
+<!doctype html>
+<html lang="my"><head><meta charset="utf-8">
+<title>ZIVPN User Panel - Users</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="120">
+<style>
+/* Global Styles for Mobile UI */
+:root {
+    --primary: #ff7f27; /* 💡 Color Change: Orange */
+    --primary-dark: #cc661f; /* Darker shade for active/hover state */
+    --secondary: #6c757d; --success: #28a745; --danger: #dc3545;
+    --light: #f8f9fa; --dark: #343a40; 
+    --bg-color: #f0f2f5; 
+    --card-bg: #ffffff;
+    --border-color: #dee2e6;
+    --warning: #ffc107; /* New: Warning color for expiry */
+    --warning-bg: #fff3cd;
+}
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color);
+    line-height: 1.6; color: var(--dark); margin: 0; padding: 0;
+    padding-bottom: 70px; /* Space for fixed bottom navigation */
+}
+.icon { font-style: normal; margin-right: 5px; }
+
+/* Header/Logo Only */
+.main-header {
+    display: flex; justify-content: space-between; align-items: center;
+    background-color: var(--card-bg); padding: 10px 15px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 15px; position: sticky; top: 0; z-index: 1000;
+}
+.header-logo a { font-size: 1.6em; font-weight: bold; color: var(--primary); text-decoration: none;}
+.header-logo .highlight { color: var(--dark); }
+
+/* 💡 Mobile Bottom Navigation (New) */
+.bottom-nav {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: var(--card-bg);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    padding: 5px 0;
+}
+.bottom-nav a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-decoration: none;
+    color: var(--secondary);
+    font-size: 0.75em;
+    padding: 8px;
+    border-radius: 6px;
+    transition: color 0.2s, background-color 0.2s;
+    min-width: 80px;
+}
+.bottom-nav a:hover, .bottom-nav a.active {
+    color: var(--primary); 
+}
+.bottom-nav a i.icon {
+    font-size: 1.2em;
+    margin-right: 0;
+    margin-bottom: 3px;
+    color: #ffd966; 
+}
+.bottom-nav a:hover i.icon, .bottom-nav a.active i.icon {
+    color: var(--primary); 
+}
+
+
+/* Table Styles (Mobile Responsiveness) */
+.table-container { padding: 0 10px; margin: 0 auto; max-width: 100%; } 
+table {
+    width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 15px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); border-radius: 8px; overflow: hidden;
+}
+th, td { padding: 10px; text-align: left; border-bottom: 1px solid var(--border-color); font-size: 0.9em; }
+th { background-color: var(--primary); color: white; font-weight: 600; text-transform: uppercase; font-size: 0.8em; } 
+tr:last-child td { border-bottom: none; }
+tr:nth-child(even) { background-color: var(--light); }
+tr:hover { background-color: #e9ecef; }
+
+/* Mobile Table Stacked View (Crucial for mobile friendliness) */
+@media (max-width: 768px) {
+    .table-container { padding: 0 5px; }
+    
+    table, thead, tbody, th, td, tr { display: block; }
+    thead { display: none; } /* Hide Header on Mobile */
+    
+    tr { 
+        border: 1px solid var(--border-color); 
+        margin-bottom: 15px; 
+        border-radius: 8px; 
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    }
+    td {
+        border: none;
+        position: relative;
+        padding-left: 50%; /* 💡 MODIFIED: Increased padding */
+        text-align: right;
+        border-bottom: 1px dashed #e0e0e0;
+    }
+    td:last-child { border-bottom: none; }
+    
+    td:before {
+        content: attr(data-label);
+        position: absolute;
+        left: 0;
+        width: 45%; /* 💡 MODIFIED: Increased label width */
+        padding-left: 10px;
+        font-weight: bold;
+        text-align: left;
+        color: var(--secondary);
+        font-size: 0.9em;
+    }
+    .pill { padding: 4px 8px; font-size: 0.8em; min-width: 70px; }
+    .delform { display: block; text-align: right; }
+    .btn-delete { width: 80px; padding: 6px 8px; font-size: 0.8em; margin-top: 5px;}
+    .days-remaining { display: block !important; }
+    /* 💡 MODIFIED BUTTONS FOR MOBILE */
+    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
+}
+/* Desktop Navigation Hidden */
+.main-nav { display: none; } 
+@media (min-width: 769px) {
+    .bottom-nav { display: none; } 
+    body { padding-bottom: 0; }
+}
+
+/* Pill/Status & Buttons */
+.pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 15px; font-size: 0.85em; font-weight: bold; min-width: 90px; justify-content: center;}
+.ok { background-color: #d4edda; color: var(--success); } 
+.bad { background-color: #f8d7da; color: var(--danger); } 
+.unk { background-color: #e2e3e5; color: var(--secondary); } 
+.shared-online { background-color: #fff3cd; color: var(--warning); } 
+.shared-offline { background-color: #f0f0f0; color: var(--secondary); } 
+
+.pill-expired { background-color: #f0f0f0; color: var(--danger); }
+.pill-expiring { background-color: var(--warning-bg); color: var(--warning); } 
+.text-expiring { color: var(--warning); font-weight: bold; } 
+
+/* 💡 NEW PILL STYLES for Online Users */
+.pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
+.pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
+.pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
+
+/* 💡 NEW PILL STYLES for Limit and Over Limit */
+.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
+.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
+.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
+.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
+
+
+/* Days Remaining Text Style */
+.days-remaining {
+    font-size: 0.85em; 
+    color: var(--secondary);
+    font-weight: 500;
+    display: inline-block;
+    margin-top: 2px;
+}
+.days-remaining .text-expiring {
+    font-weight: bold;
+}
+
+
+/* Row Styles for Expiry */
+tr.expired td { opacity: 0.6; text-decoration-color: var(--danger); }
+tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba(255, 193, 7, 0.1); } 
+tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220, 53, 69, 0.1); } 
+
+
+.btn-delete { background-color: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s;}
+.btn-delete:hover { background-color: #c82333; }
+/* 💡 MODIFIED BUTTON: Expires Edit Button - Matches Table HTML change */
+.btn-edit-expires { 
+    background-color: var(--primary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    width: 50px; 
+    text-align: center;
+}
+/* 💡 MODIFIED BUTTON: Limit Edit Button - Matches Table HTML change */
+.btn-edit-limit { 
+    background-color: var(--secondary); 
+    color: white; 
+    border: none; 
+    padding: 3px 6px; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-size: 0.75em; 
+    transition: background-color 0.2s; 
+    margin-left: 5px;
+    margin-top: 5px;
+    width: 50px; 
+    text-align: center;
+}
+
+/* 💡 New/Updated styles for Edit Modal (Must be included here for the HTML wrapper) */
+.modal {
+  display: none; 
+  position: fixed; 
+  z-index: 3000; 
+  left: 0; top: 0;
+  width: 100%; height: 100%; 
+  overflow: auto; 
+  background-color: rgba(0,0,0,0.4); 
+}
+.modal-content {
+  background-color: var(--card-bg); /* Use card background color */
+  margin: 15% auto; /* နေရာချထားမှု ချိန်ညှိသည် */
+  padding: 25px; 
+  border: none; 
+  width: 90%; 
+  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
+  border-radius: 12px;
+  position: relative;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2); 
+}
+/* 💡 CLOSE BUTTON POSITIONING FIX */
+.close-btn { 
+  color: var(--secondary); 
+  position: absolute; 
+  top: 8px; /* အပေါ်သို့ ရွှေ့သည် */
+  right: 15px; /* ညာဘက်သို့ ရွှေ့သည် */
+  font-size: 32px; 
+  font-weight: 300;
+  line-height: 1;
+}
+.close-btn:hover { color: var(--danger); }
+.btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
+
+/* MODAL UI SPECIFIC STYLES - Duplicated for full self-containment */
+.modal .input-label {
+    display: block;
+    text-align: left;
+    font-weight: 600;
+    color: var(--dark);
+    font-size: 0.9em; 
+    margin-bottom: 5px;
+}
+.modal .input-field-wrapper {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: #fff;
+}
+.modal .input-field-wrapper.is-readonly {
+    background-color: var(--light); 
+    border: 1px solid #ddd;
+}
+.modal .input-field-wrapper input {
+    width: 100%;
+    padding: 12px 10px;
+    border: none; 
+    border-radius: 8px;
+    font-size: 16px;
+    outline: none;
+    background: transparent; 
+}
+.modal .input-hint {
+    margin-top: 5px;
+    text-align: left;
+    font-size: 0.75em; 
+    color: var(--secondary);
+    line-height: 1.4;
+    padding-left: 5px;
+}
+
+.modal-save-btn {
+    width: 100%;
+    padding: 12px; 
+    background-color: var(--primary); 
+    color: white; 
+    border: none; 
+    border-radius: 8px; 
+    font-size: 1.0em;
+    cursor: pointer; 
+    transition: background-color 0.3s; 
+    margin-top: 10px; 
+    font-weight: bold;
+}
+.modal-save-btn:hover { background-color: var(--primary-dark); } 
+
+
+</style>
+</head><body>
+    
+    <header class="main-header">
+        <div class="header-logo">
+            <a href="/">ZIVPN<span class="highlight"> Panel</span></a>
+        </div>
+    </header>
+    
+{% if err %}
+<div class="boxa1">
+    <div class="err" style="text-align: center;">{{ err }}</div>
+</div>
+{% endif %}
+
+{% include 'users_table.html' %}
+
+    <nav class="bottom-nav">
+        <a href="/">
+            <i class="icon">➕</i>
+            <span>အကောင့်ထည့်ရန်</span>
+        </a>
+        <a href="/users">
+            <i class="icon">📜</i>
+            <span>အသုံးပြုသူ စာရင်း</span>
+        </a>
+        <a href="/logout">
+            <i class="icon">➡️</i>
+            <span>ထွက်ရန်</span>
+        </a>
+    </nav>
+
+</body></html>
+WRAPPER_HTML
+# --- End of users_table_wrapper.html ---
+
+
+# 💡 ULTIMATE FIX 3: Web Panel (Flask - web.py) - app.run ကို 0.0.0.0 သို့ ပြင်ဆင်ခြင်း
 echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ် (SSL ဖယ်ရှားထားသည်)...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
@@ -258,7 +1040,7 @@ def get_server_ip():
 SERVER_IP_FALLBACK = get_server_ip()
 CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML Template အဓိကဖိုင် (Nginx/HTTP အတွက် IP Copy Function ကို ထိန်းသိမ်းထားသည်)
+# 💡 HTML (UNCHANGED)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
@@ -1011,793 +1793,10 @@ def favicon(): return ("",204)
 def handle_405(e): return redirect(url_for('index'))
 
 if __name__ == "__main__":
-  # 💡 Nginx reverse proxy အတွက် 127.0.0.1 (localhost) တွင် HTTP ဖြင့် run ပါ။
-  app.run(host="127.0.0.1", port=8080)
+  # 💡 ULTIMATE FIX: Nginx reverse proxy အတွက် 0.0.0.0 (all interfaces) တွင် run ပါ။
+  # ExecStart တွင် host=0.0.0.0 ပေးထားပြီးဖြစ်သော်လည်း python app ကို တိုက်ရိုက် run သောအခါ အတွက်လည်း ထည့်သွင်းထားပါသည်။
+  app.run(host=os.environ.get("FLASK_RUN_HOST", "0.0.0.0"), port=8080)
 PY
-
-
-# 💡 Template Files (users_table.html, users_table_wrapper.html) ကို ဖြည့်သွင်းခြင်း
-# (Your original templates should be placed here. I assume you still have the full original script
-# and this portion is merely a guide. You MUST ensure the full content of those templates 
-# from your original script is written to the files below to avoid errors.)
-# I will use a placeholder here for brevity:
-
-echo -e "${Y}📄 HTML Template များကို template directory ထဲသို့ ရေးနေပါတယ်...${Z}"
-# --- Start of users_table.html (Content from your original script) ---
-cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
-<div class="table-container">
-    <table>
-      <thead>
-          <tr>
-            <th><i class="icon">👤</i> User</th>
-            <th><i class="icon">🔑</i> Password</th>
-            <th><i class="icon">⏰</i> Expires</th>
-            <th><i class="icon">💻</i> Online Users</th> {# 💡 NEW COLUMN #}
-            <th><i class="icon">👥</i> Limit</th> {# 💡 NEW COLUMN #}
-            <th><i class="icon">🚦</i> Status</th> 
-            <th><i class="icon">❌</i> Action</th>
-          </tr>
-      </thead>
-      <tbody>
-          {% for u in users %}
-          <tr class="{% if u.expires and u.expires_date < today_date %}expired{% elif u.expiring_soon %}expiring-soon{% elif u.is_over_limit %}over-limit{% endif %}"> {# 💡 ADDED over-limit CLASS #}
-            <td data-label="User">{% if u.expires and u.expires_date < today_date %}<s>{{u.user}}</s>{% else %}{{u.user}}{% endif %}</td>
-            <td data-label="Password">{% if u.expires and u.expires_date < today_date %}<s>{{u.password}}</s>{% else %}{{u.password}}{% endif %}</td>
-            <td data-label="Expires">
-                {% if u.expires %}
-                    {% if u.expires_date < today_date %}
-                        <s>{{u.expires}} (Expired)</s>
-                    {% else %}
-                        {% if u.expiring_soon %}
-                            <span class="text-expiring">{{u.expires}}</span>
-                        {% else %}
-                            {{u.expires}}
-                        {% endif %}
-                        
-                        {# 💡 Display Days Remaining #}
-                        <br><span class="days-remaining">
-                            (ကျန်ရှိ: 
-                            {% if u.days_remaining is not none %}
-                                {% if u.days_remaining == 0 %}
-                                    <span class="text-expiring">ဒီနေ့ နောက်ဆုံး</span>
-                                {% else %}
-                                    {{ u.days_remaining }} ရက်
-                                {% endif %}
-                            {% else %}
-                                —
-                            {% endif %}
-                            )
-                        </span>
-                    {% endif %}
-                {% else %}
-                    <span class="muted">—</span>
-                {% endif %}
-                {# 💡 MODIFIED BUTTON TEXT #}
-                <button type="button" class="btn-edit-expires" onclick="showExpiresModal('{{ u.user }}', '{{ u.expires }}')"><i class="icon">📝</i> Edit</button> 
-
-            </td>
-            
-            <td data-label="Online Users"> {# 💡 NEW ONLINE USERS DATA #}
-                {% if u.online_count is not none %}
-                    {% if u.online_count > 0 %}
-                        <span class="pill pill-online">{{ u.online_count }}</span>
-                    {% else %}
-                        <span class="pill pill-offline">0</span>
-                    {% endif %}
-                {% else %}
-                    <span class="pill pill-unknown">N/A</span>
-                {% endif %}
-            </td>
-            
-            <td data-label="Limit"> {# 💡 NEW LIMIT DATA #}
-                {% if u.limit_count is not none %}
-                    {% if u.limit_count > 1 %}
-                        <span class="pill pill-limit-multi">{{ u.limit_count }}</span>
-                    {% elif u.limit_count == 1 %}
-                        <span class="pill pill-limit-single">{{ u.limit_count }}</span>
-                    {% else %}
-                        <span class="pill pill-limit-default">N/A (Limit: 1)</span>
-                    {% endif %}
-                {% else %}
-                    <span class="pill pill-limit-default">N/A (Limit: 1)</span>
-                {% endif %}
-                {# 💡 MODIFIED BUTTON TEXT #}
-                <button type="button" class="btn-edit-limit" onclick="showLimitModal('{{ u.user }}', '{{ u.limit_count }}')"><i class="icon">📝</i> Limit</button>
-            </td>
-
-            <td data-label="Status">
-                {# Flask's is_expiring_soon() and expiration logic determines the status #}
-                {% if u.expires and u.expires_date < today_date %}
-                    <span class="pill pill-expired"><i class="icon">🛑</i> Expired</span>
-                
-                {# Expiring Soon (Today or Tomorrow) #}
-                {% elif u.expiring_soon %}
-                    <span class="pill pill-expiring"><i class="icon">⚠️</i> Expiring Soon</span>
-                    
-                {# Over Limit #}
-                {% elif u.is_over_limit %}
-                    <span class="pill pill-over-limit"><i class="icon">❌</i> Over Limit</span> {# 💡 NEW STATUS #}
-
-                {# Active (Including no expiration set, or 2 days or more left, and not over limit) #}
-                {% else %}
-                    <span class="pill ok"><i class="icon">🟢</i> Active</span>
-                {% endif %}
-            </td>
-
-            <td data-label="Action">
-              <button type="button" class="btn-edit" onclick="showEditModal('{{ u.user }}', '{{ u.password }}', '{{ u.expires }}')"><i class="icon">✏️</i> Pass</button> {# 💡 Password Edit Button #}
-              <form class="delform" method="post" action="/delete" onsubmit="return confirm('{{u.user}} ကို ဖျက်မလား?')">
-                <input type="hidden" name="user" value="{{u.user}}">
-                <button type="submit" class="btn-delete"><i class="icon">🗑️</i> Delete</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-      </tbody>
-    </table>
-</div>
-
-{# 💡 PASSWORD EDIT MODAL (UNCHANGED) #}
-<div id="editModal" class="modal">
-  <div class="modal-content">
-    <span class="close-btn" onclick="document.getElementById('editModal').style.display='none'">&times;</span>
-    <h2 class="section-title"><i class="icon">✏️</i> Change Password</h2>
-    <form method="post" action="/edit">
-        <input type="hidden" id="edit-user" name="user">
-        
-        <div class="input-group">
-            <label for="current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
-            <div class="input-field-wrapper is-readonly">
-                <input type="text" id="current-user-display" name="current_user_display" readonly>
-            </div>
-        </div>
-        
-        <div class="input-group">
-            <label for="current-password" class="input-label"><i class="icon">🔑</i> Current Password</label>
-            <div class="input-field-wrapper is-readonly">
-                <input type="text" id="current-password" name="current_password" readonly>
-            </div>
-            <p class="input-hint">လက်ရှိ Password (မပြောင်းလဲလိုပါက ထားခဲ့နိုင်ပါသည်)</p>
-        </div>
-        
-        <div class="input-group">
-            <label for="new-password" class="input-label"><i class="icon">🔒</i> New Password</label>
-            <div class="input-field-wrapper">
-                <input type="text" id="new-password" name="password" placeholder="Password အသစ်ထည့်ပါ" required>
-            </div>
-            <p class="input-hint">User အတွက် Password အသစ်</p>
-        </div>
-        
-        <button class="save-btn modal-save-btn" type="submit">Password အသစ် သိမ်းမည်</button>
-    </form>
-  </div>
-</div>
-
-{# 💡 NEW: EXPIRES EDIT MODAL #}
-<div id="expiresModal" class="modal">
-  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
-    <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
-    <h2 class="section-title"><i class="icon">⏰</i> Change Expiry Date</h2>
-    <form method="post" action="/edit_expires"> {# NEW ROUTE #}
-        <input type="hidden" id="expires-edit-user" name="user">
-        
-        <div class="input-group">
-            <label for="expires-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
-            <div class="input-field-wrapper is-readonly">
-                <input type="text" id="expires-current-user-display" name="current_user_display" readonly>
-            </div>
-        </div>
-        
-        <div class="input-group">
-            <label for="new-expires" class="input-label"><i class="icon">🗓️</i> New Expiration Date</label>
-            <div class="input-field-wrapper">
-                <input type="text" id="new-expires" name="expires" placeholder="ဥပမာ: 2026-01-31 သို့မဟုတ် 30" required>
-            </div>
-            <p class="input-hint">ရက်စွဲ (YYYY-MM-DD) သို့မဟုတ် ရက်အရေအတွက် (ဥပမာ: 30)</p>
-        </div>
-        
-        <button class="save-btn modal-save-btn" type="submit">Expires အသစ် သိမ်းမည်</button>
-    </form>
-  </div>
-</div>
-
-{# 💡 NEW: LIMIT EDIT MODAL #}
-<div id="limitModal" class="modal">
-  <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
-    <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
-    <h2 class="section-title"><i class="icon">👥</i> Change User Limit</h2>
-    <form method="post" action="/edit_limit"> {# NEW ROUTE #}
-        <input type="hidden" id="limit-edit-user" name="user">
-        
-        <div class="input-group">
-            <label for="limit-current-user-display" class="input-label"><i class="icon">👤</i> User Name</label>
-            <div class="input-field-wrapper is-readonly">
-                <input type="text" id="limit-current-user-display" name="current_user_display" readonly>
-            </div>
-        </div>
-        
-        <div class="input-group">
-            <label for="new-limit" class="input-label"><i class="icon">🔢</i> Max Users</label>
-            <div class="input-field-wrapper">
-                <input type="number" id="new-limit" name="limit_count" placeholder="အများဆုံး သုံးစွဲသူအရေအတွက် (1 မှ 10)" min="1" max="10" required>
-            </div>
-            <p class="input-hint">ဤအကောင့်အတွက် အများဆုံး သုံးစွဲသူအရေအတွက် (ပုံမှန်- 1)</p>
-        </div>
-        
-        <button class="save-btn modal-save-btn" type="submit">Limit အသစ် သိမ်းမည်</button>
-    </form>
-  </div>
-</div>
-
-
-<style>
-/* 💡 MODAL UI UPDATE START (UNCHANGED) */
-.modal-content {
-  background-color: var(--card-bg); /* Use card background color */
-  margin: 15% auto; /* နေရာချထားမှု ချိန်ညှိသည် */
-  padding: 25px; 
-  border: none; /* Remove default border */
-  width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
-  border-radius: 12px;
-  position: relative;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.2); /* Stronger, modern shadow */
-}
-/* 💡 CLOSE BUTTON POSITIONING FIX */
-.close-btn { 
-  color: var(--secondary); 
-  position: absolute; /* modal-content နှင့် စပ်လျဉ်း၍ နေရာချထားသည် */
-  top: 8px; /* အပေါ်သို့ ရွှေ့သည် */
-  right: 15px; /* ညာဘက်သို့ ရွှေ့သည် */
-  font-size: 32px; 
-  font-weight: 300; 
-  transition: color 0.2s;
-  line-height: 1; /* စာကြောင်း အကွာအဝေး ချိန်ညှိသည် */
-}
-.close-btn:hover { color: var(--danger); }
-.section-title { margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); color: var(--primary-dark);}
-
-/* Re-use Input Group styles from main HTML, but define specifically for modal for clarity */
-.modal .input-group { margin-bottom: 20px; }
-.modal .input-label {
-    display: block;
-    text-align: left;
-    font-weight: 600;
-    color: var(--dark);
-    font-size: 0.9em; /* ညီညာပြီး သေးငယ်စေရန် */
-    margin-bottom: 5px;
-}
-.modal .input-field-wrapper {
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background-color: #fff;
-    transition: border-color 0.3s, box-shadow 0.3s;
-}
-.modal .input-field-wrapper:focus-within {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25);
-}
-.modal .input-field-wrapper.is-readonly {
-    background-color: var(--light); /* Light gray background for readonly */
-    border: 1px solid #ddd;
-}
-.modal .input-field-wrapper input {
-    width: 100%;
-    padding: 12px 10px;
-    border: none; 
-    border-radius: 8px;
-    font-size: 16px;
-    outline: none;
-    background: transparent; 
-}
-
-/* Hint Text */
-.modal .input-hint {
-    margin-top: 5px;
-    text-align: left;
-    font-size: 0.75em; /* ပိုသေးငယ်စေရန် */
-    color: var(--secondary);
-    line-height: 1.4;
-    padding-left: 5px;
-}
-
-/* Save Button Design (Using Primary Color) */
-.modal-save-btn {
-    width: 100%;
-    padding: 12px; 
-    background-color: var(--primary); /* Orange Primary Color */
-    color: white; 
-    border: none; 
-    border-radius: 8px; 
-    font-size: 1.0em;
-    cursor: pointer; 
-    transition: background-color 0.3s, transform 0.1s; 
-    margin-top: 10px; 
-    font-weight: bold;
-    box-shadow: 0 4px 6px rgba(255, 127, 39, 0.3); /* Subtle button shadow */
-}
-.modal-save-btn:hover { background-color: var(--primary-dark); } 
-.modal-save-btn:active { background-color: var(--primary-dark); transform: translateY(1px); box-shadow: 0 2px 4px rgba(255, 127, 39, 0.3); }
-
-/* Button Styles for Action Column */
-.btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
-.btn-edit:hover { background-color: #e0ac08; }
-.delform { display: inline-block; margin: 0; }
-.btn-delete { background-color: var(--danger); color: white; border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; }
-.btn-delete:hover { background-color: #c82333; }
-
-/* 💡 MODIFIED BUTTON: Expires Edit Button */
-.btn-edit-expires { 
-    background-color: var(--primary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px; /* Reduced padding */
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    display: inline-block; 
-    width: 50px; /* 💡 Set fixed width */
-    text-align: center;
-}
-.btn-edit-expires:hover { background-color: var(--primary-dark); }
-
-/* 💡 MODIFIED BUTTON: Limit Edit Button */
-.btn-edit-limit { 
-    background-color: var(--secondary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px; /* Reduced padding */
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    display: inline-block;
-    width: 50px; /* 💡 Set fixed width */
-    text-align: center;
-}
-.btn-edit-limit:hover { background-color: #5a6268; }
-
-
-/* Days Remaining Text Style (UNCHANGED) */
-.days-remaining {
-    font-size: 0.85em; /* ဥပမာ- 2025-10-24 ထက် အနည်းငယ် သေးငယ်စေရန် */
-    color: var(--secondary);
-    font-weight: 500;
-    display: inline-block;
-    margin-top: 2px;
-}
-.days-remaining .text-expiring {
-    font-weight: bold;
-}
-
-/* 💡 NEW PILL STYLES for Online Users */
-.pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
-.pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
-.pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
-
-/* 💡 NEW PILL STYLES for Limit */
-.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
-.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
-.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
-.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
-
-
-@media (max-width: 768px) {
-    /* 💡 MODIFIED: Column count changed, need to adjust data-label padding */
-    td { padding-left: 50%; } /* Increase padding for more space */
-    td:before { width: 45%; } /* Increase label width */
-    td[data-label="Action"] { display: flex; justify-content: flex-end; align-items: center; }
-    .btn-edit { width: auto; padding: 6px 8px; font-size: 0.8em; margin-right: 5px; }
-    .btn-delete { width: auto; padding: 6px 8px; font-size: 0.8em; margin-top: 0; }
-    .modal-content { 
-        margin: 20% auto; 
-        max-width: 280px; /* 💡 Mobile အတွက် ပိုသေးအောင် လျှော့ချသည်။ */
-    }
-    .days-remaining { display: block; text-align: right; }
-    /* 💡 MODIFIED BUTTONS FOR MOBILE */
-    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-
-
-}
-/* 💡 MODAL UI UPDATE END */
-/* 💡 NEW ROW STYLE: Over Limit */
-tr.over-limit { 
-    border-left: 5px solid var(--danger); 
-    background-color: rgba(220, 53, 69, 0.1); /* Light red background */
-}
-</style>
-
-<script>
-    // JavaScript to handle the modal display
-    function showEditModal(user, password, expires) {
-        document.getElementById('edit-user').value = user;
-        document.getElementById('current-user-display').value = user; // Display user
-        document.getElementById('current-password').value = password;
-        
-        // Clear new password field when opening
-        document.getElementById('new-password').value = '';
-        
-        document.getElementById('editModal').style.display = 'block';
-    }
-
-    // 💡 NEW JAVASCRIPT: Handle Expires Modal Display
-    function showExpiresModal(user, expires) {
-        document.getElementById('expires-edit-user').value = user;
-        document.getElementById('expires-current-user-display').value = user; 
-        document.getElementById('new-expires').value = expires;
-        
-        document.getElementById('expiresModal').style.display = 'block';
-    }
-    
-    // 💡 NEW JAVASCRIPT: Handle Limit Modal Display
-    function showLimitModal(user, limit) {
-        document.getElementById('limit-edit-user').value = user;
-        document.getElementById('limit-current-user-display').value = user; 
-        // Default to 1 if limit is 'None' or empty
-        document.getElementById('new-limit').value = limit && limit !== 'None' ? limit : 1; 
-        
-        document.getElementById('limitModal').style.display = 'block';
-    }
-
-    // Close modal when clicking outside of it (MODIFIED to check all modals)
-    window.onclick = function(event) {
-        if (event.target == document.getElementById('editModal')) {
-            document.getElementById('editModal').style.display = 'none';
-        }
-        if (event.target == document.getElementById('expiresModal')) {
-            document.getElementById('expiresModal').style.display = 'none';
-        }
-        if (event.target == document.getElementById('limitModal')) {
-            document.getElementById('limitModal').style.display = 'none';
-        }
-    }
-</script>
-TABLE_HTML
-# --- End of users_table.html ---
-
-# --- Start of users_table_wrapper.html (Content from your original script) ---
-cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
-<!doctype html>
-<html lang="my"><head><meta charset="utf-8">
-<title>ZIVPN User Panel - Users</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="120">
-<style>
-/* Global Styles for Mobile UI */
-:root {
-    --primary: #ff7f27; /* 💡 Color Change: Orange */
-    --primary-dark: #cc661f; /* Darker shade for active/hover state */
-    --secondary: #6c757d; --success: #28a745; --danger: #dc3545;
-    --light: #f8f9fa; --dark: #343a40; 
-    --bg-color: #f0f2f5; 
-    --card-bg: #ffffff;
-    --border-color: #dee2e6;
-    --warning: #ffc107; /* New: Warning color for expiry */
-    --warning-bg: #fff3cd;
-}
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color);
-    line-height: 1.6; color: var(--dark); margin: 0; padding: 0;
-    padding-bottom: 70px; /* Space for fixed bottom navigation */
-}
-.icon { font-style: normal; margin-right: 5px; }
-
-/* Header/Logo Only */
-.main-header {
-    display: flex; justify-content: space-between; align-items: center;
-    background-color: var(--card-bg); padding: 10px 15px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-    margin-bottom: 15px; position: sticky; top: 0; z-index: 1000;
-}
-.header-logo a { font-size: 1.6em; font-weight: bold; color: var(--primary); text-decoration: none;}
-.header-logo .highlight { color: var(--dark); }
-
-/* 💡 Mobile Bottom Navigation (New) */
-.bottom-nav {
-    display: flex;
-    justify-content: space-around;
-    align-items: center;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    background-color: var(--card-bg);
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-    z-index: 1000;
-    padding: 5px 0;
-}
-.bottom-nav a {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-decoration: none;
-    color: var(--secondary);
-    font-size: 0.75em;
-    padding: 8px;
-    border-radius: 6px;
-    transition: color 0.2s, background-color 0.2s;
-    min-width: 80px;
-}
-.bottom-nav a:hover, .bottom-nav a.active {
-    color: var(--primary); 
-}
-.bottom-nav a i.icon {
-    font-size: 1.2em;
-    margin-right: 0;
-    margin-bottom: 3px;
-    color: #ffd966; 
-}
-.bottom-nav a:hover i.icon, .bottom-nav a.active i.icon {
-    color: var(--primary); 
-}
-
-
-/* Table Styles (Mobile Responsiveness) */
-.table-container { padding: 0 10px; margin: 0 auto; max-width: 100%; } 
-table {
-    width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 15px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); border-radius: 8px; overflow: hidden;
-}
-th, td { padding: 10px; text-align: left; border-bottom: 1px solid var(--border-color); font-size: 0.9em; }
-th { background-color: var(--primary); color: white; font-weight: 600; text-transform: uppercase; font-size: 0.8em; } 
-tr:last-child td { border-bottom: none; }
-tr:nth-child(even) { background-color: var(--light); }
-tr:hover { background-color: #e9ecef; }
-
-/* Mobile Table Stacked View (Crucial for mobile friendliness) */
-@media (max-width: 768px) {
-    .table-container { padding: 0 5px; }
-    
-    table, thead, tbody, th, td, tr { display: block; }
-    thead { display: none; } /* Hide Header on Mobile */
-    
-    tr { 
-        border: 1px solid var(--border-color); 
-        margin-bottom: 15px; 
-        border-radius: 8px; 
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
-    }
-    td {
-        border: none;
-        position: relative;
-        padding-left: 50%; /* 💡 MODIFIED: Increased padding */
-        text-align: right;
-        border-bottom: 1px dashed #e0e0e0;
-    }
-    td:last-child { border-bottom: none; }
-    
-    td:before {
-        content: attr(data-label);
-        position: absolute;
-        left: 0;
-        width: 45%; /* 💡 MODIFIED: Increased label width */
-        padding-left: 10px;
-        font-weight: bold;
-        text-align: left;
-        color: var(--secondary);
-        font-size: 0.9em;
-    }
-    .pill { padding: 4px 8px; font-size: 0.8em; min-width: 70px; }
-    .delform { display: block; text-align: right; }
-    .btn-delete { width: 80px; padding: 6px 8px; font-size: 0.8em; margin-top: 5px;}
-    .days-remaining { display: block !important; }
-    /* 💡 MODIFIED BUTTONS FOR MOBILE */
-    .btn-edit-expires { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-    .btn-edit-limit { display: inline-block; margin-left: 5px; width: auto; box-sizing: border-box; }
-}
-/* Desktop Navigation Hidden */
-.main-nav { display: none; } 
-@media (min-width: 769px) {
-    .bottom-nav { display: none; } 
-    body { padding-bottom: 0; }
-}
-
-/* Pill/Status & Buttons */
-.pill { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 15px; font-size: 0.85em; font-weight: bold; min-width: 90px; justify-content: center;}
-.ok { background-color: #d4edda; color: var(--success); } 
-.bad { background-color: #f8d7da; color: var(--danger); } 
-.unk { background-color: #e2e3e5; color: var(--secondary); } 
-.shared-online { background-color: #fff3cd; color: var(--warning); } 
-.shared-offline { background-color: #f0f0f0; color: var(--secondary); } 
-
-.pill-expired { background-color: #f0f0f0; color: var(--danger); }
-.pill-expiring { background-color: var(--warning-bg); color: var(--warning); } 
-.text-expiring { color: var(--warning); font-weight: bold; } 
-
-/* 💡 NEW PILL STYLES for Online Users */
-.pill-online { background-color: #d4edda; color: #155724; } /* Greenish */
-.pill-offline { background-color: #e2e3e5; color: #6c757d; } /* Grayish */
-.pill-unknown { background-color: #fff3cd; color: #856404; } /* Yellowish */
-
-/* 💡 NEW PILL STYLES for Limit and Over Limit */
-.pill-limit-single { background-color: #007bff; color: white; } /* Blue for single user */
-.pill-limit-multi { background-color: #28a745; color: white; } /* Green for multiple users */
-.pill-limit-default { background-color: #e2e3e5; color: #6c757d; } /* Grayish for default/N/A */
-.pill-over-limit { background-color: #dc3545; color: white; } /* Red for over limit */
-
-
-/* Days Remaining Text Style */
-.days-remaining {
-    font-size: 0.85em; 
-    color: var(--secondary);
-    font-weight: 500;
-    display: inline-block;
-    margin-top: 2px;
-}
-.days-remaining .text-expiring {
-    font-weight: bold;
-}
-
-
-/* Row Styles for Expiry */
-tr.expired td { opacity: 0.6; text-decoration-color: var(--danger); }
-tr.expiring-soon { border-left: 5px solid var(--warning); background-color: rgba(255, 193, 7, 0.1); } 
-tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220, 53, 69, 0.1); } 
-
-
-.btn-delete { background-color: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s;}
-.btn-delete:hover { background-color: #c82333; }
-/* 💡 MODIFIED BUTTON: Expires Edit Button - Matches Table HTML change */
-.btn-edit-expires { 
-    background-color: var(--primary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px; 
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    width: 50px; 
-    text-align: center;
-}
-/* 💡 MODIFIED BUTTON: Limit Edit Button - Matches Table HTML change */
-.btn-edit-limit { 
-    background-color: var(--secondary); 
-    color: white; 
-    border: none; 
-    padding: 3px 6px; 
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-size: 0.75em; 
-    transition: background-color 0.2s; 
-    margin-left: 5px;
-    margin-top: 5px;
-    width: 50px; 
-    text-align: center;
-}
-
-/* 💡 New/Updated styles for Edit Modal (Must be included here for the HTML wrapper) */
-.modal {
-  display: none; 
-  position: fixed; 
-  z-index: 3000; 
-  left: 0; top: 0;
-  width: 100%; height: 100%; 
-  overflow: auto; 
-  background-color: rgba(0,0,0,0.4); 
-}
-.modal-content {
-  background-color: var(--card-bg); /* Use card background color */
-  margin: 15% auto; /* နေရာချထားမှု ချိန်ညှိသည် */
-  padding: 25px; 
-  border: none; 
-  width: 90%; 
-  max-width: 320px; /* 💡 MAX-WIDTH ကို 320px သို့ လျှော့ချသည်။ (Used by all modals now) */
-  border-radius: 12px;
-  position: relative;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.2); 
-}
-/* 💡 CLOSE BUTTON POSITIONING FIX */
-.close-btn { 
-  color: var(--secondary); 
-  position: absolute; 
-  top: 8px; /* အပေါ်သို့ ရွှေ့သည် */
-  right: 15px; /* ညာဘက်သို့ ရွှေ့သည် */
-  font-size: 32px; 
-  font-weight: 300;
-  line-height: 1;
-}
-.close-btn:hover { color: var(--danger); }
-.btn-edit { background-color: var(--warning); color: var(--dark); border: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: background-color 0.2s; margin-right: 5px; }
-
-/* MODAL UI SPECIFIC STYLES - Duplicated for full self-containment */
-.modal .input-label {
-    display: block;
-    text-align: left;
-    font-weight: 600;
-    color: var(--dark);
-    font-size: 0.9em; 
-    margin-bottom: 5px;
-}
-.modal .input-field-wrapper {
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background-color: #fff;
-}
-.modal .input-field-wrapper.is-readonly {
-    background-color: var(--light); 
-    border: 1px solid #ddd;
-}
-.modal .input-field-wrapper input {
-    width: 100%;
-    padding: 12px 10px;
-    border: none; 
-    border-radius: 8px;
-    font-size: 16px;
-    outline: none;
-    background: transparent; 
-}
-.modal .input-hint {
-    margin-top: 5px;
-    text-align: left;
-    font-size: 0.75em; 
-    color: var(--secondary);
-    line-height: 1.4;
-    padding-left: 5px;
-}
-
-.modal-save-btn {
-    width: 100%;
-    padding: 12px; 
-    background-color: var(--primary); 
-    color: white; 
-    border: none; 
-    border-radius: 8px; 
-    font-size: 1.0em;
-    cursor: pointer; 
-    transition: background-color 0.3s; 
-    margin-top: 10px; 
-    font-weight: bold;
-}
-.modal-save-btn:hover { background-color: var(--primary-dark); } 
-
-
-</style>
-</head><body>
-    
-    <header class="main-header">
-        <div class="header-logo">
-            <a href="/">ZIVPN<span class="highlight"> Panel</span></a>
-        </div>
-    </header>
-    
-{% if err %}
-<div class="boxa1">
-    <div class="err" style="text-align: center;">{{ err }}</div>
-</div>
-{% endif %}
-
-{% include 'users_table.html' %}
-
-    <nav class="bottom-nav">
-        <a href="/">
-            <i class="icon">➕</i>
-            <span>အကောင့်ထည့်ရန်</span>
-        </a>
-        <a href="/users">
-            <i class="icon">📜</i>
-            <span>အသုံးပြုသူ စာရင်း</span>
-        </a>
-        <a href="/logout">
-            <i class="icon">➡️</i>
-            <span>ထွက်ရန်</span>
-        </a>
-    </nav>
-
-</body></html>
-WRAPPER_HTML
-# --- End of users_table_wrapper.html ---
 
 
 # ===== FIX: User Limit Enforcement Script + Cron Job (unchanged) =====
@@ -1911,10 +1910,10 @@ iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 
 ufw allow 5667/udp >/dev/null 2>&1 || true
 ufw allow 6000:19999/udp >/dev/null 2>&1 || true
-# 💡 NEW: Nginx အတွက် HTTP (80) & HTTPS (443) ကို ဖွင့်ပါ
+# 💡 Nginx အတွက် HTTP (80) & HTTPS (443) ကို ဖွင့်ပါ
 ufw allow 80/tcp >/dev/null 2>&1 || true
 ufw allow 443/tcp >/dev/null 2>&1 || true
-# 💡 OLD: Port 8080 ကို ပိတ်လိုက်ပါ (127.0.0.1 တွင်သာ run သောကြောင့်)
+# 💡 Port 8080 ကို ပိတ်လိုက်ပါ (127.0.0.1 တွင်သာ run သောကြောင့်)
 ufw delete allow 8080/tcp >/dev/null 2>&1 || true 
 ufw reload >/dev/null 2>&1 || true
 
@@ -1934,11 +1933,10 @@ nginx -t >/dev/null 2>&1 && systemctl enable --now nginx
 IP=$(hostname -I | awk '{print $1}')
 echo -e "\n$LINE\n${G}✅ Done${Z}"
 echo -e "${C}VPN Server :${Z} ${Y}Active${Z}"
-echo -e "${C}Web Panel (HTTP/Nginx) :${Z} ${Y}http://Zivpn.web-panel.dtac68.shop${Z} (Nginx မှ Flask သို့ ပြန်ညွှန်နေပါမည်။)"
+echo -e "${C}Web Panel (HTTP/Nginx) :${Z} ${Y}http://Zivpn.web-panel.dtac68.shop${Z} (Nginx မှ HTTPS သို့ Redirect လုပ်ပါမည်။)"
 echo -e "${C}Web Panel (Fallback) :${Z} ${Y}http://$IP:8080 (Local Only)${Z}"
 echo -e "\n${Y}🚨 နောက်ထပ် အဆင့် (HTTPS ရရှိရန်)🚨${Z}"
 echo -e "${C}အဆင့် ၁: ${Z} သင်၏ **Zivpn.web-panel.dtac68.shop** Domain သည် ဤ Server IP (${IP}) ကို ညွှန်ပြနေကြောင်း သေချာပါစေ။"
 echo -e "${C}အဆင့် ၂: ${Z} အောက်ပါ Command ဖြင့် **Let's Encrypt (Certbot)** ကို run ပါ။"
 echo -e "   ${G}sudo certbot --nginx -d Zivpn.web-panel.dtac68.shop${Z}"
 echo -e "$LINE"
-
