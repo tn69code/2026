@@ -1,8 +1,9 @@
 #!/bin/bash
-# ZIVPN UDP Server + Web UI (Myanmar) - HTTPS / NGINX READY MODIFICATION
-# ================================== MODIFIED FOR NGINX REVERSE PROXY ==================================
-# 💡 NEW MODIFICATION: Flask is set to run on 0.0.0.0:8080 (HTTP) to work properly with systemd.
-# 💡 NEW MODIFICATION: Nginx Port 80 config is now a proper HTTP->HTTPS Redirect block.
+# ZIVPN UDP Server + Web UI (Myanmar) - Login IP Position & Nav Icon FIX + Expiry Logic Update + Status FIX + PASSWORD EDIT FEATURE (MODAL UI UPDATE - Syntax Fixed + MAX-WIDTH Reduced)
+# ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
+# 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX
+# 💡 MODIFICATION REQUEST: Shorten 'Edit Expires' and 'Edit Limit' buttons & make their Modals the same width as 'Password Edit' modal.
+# 💡 HTTPS MODIFICATION: NGINX + CERTBOT ADDED for zivpn.web-panel.dtac68.shop
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -10,9 +11,10 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ 
     echo -e "\n$LINE"
-    echo -e "${G}ZIVPN UDP Server + Web UI (NGINX/HTTPS ပြင်ဆင်ပြီး)${Z}"
+    echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန် ပြင်ဆင်ပြီး)${Z}"
+    echo -e "${C}🚨 Web Panel ကို Nginx/Certbot ဖြင့် HTTPS (https://zivpn.web-panel.dtac68.shop) သို့ ပြောင်းလဲနေပါသည်။${Z}"
     echo -e "$LINE"
-    echo -e "${C}Web Panel ကို Nginx Reverse Proxy မှတဆင့် Zivpn.web-panel.dtac68.shop တွင် အသုံးပြုရန် ပြင်ဆင်ပါမည်။${Z}\n"
+    echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
 say 
 
@@ -51,21 +53,21 @@ apt_guard_end(){
   if [ "${CNF_DISABLED:-0}" = "1" ] && [ -f "${CNF_CONF}.disabled" ]; then mv "${CNF_CONF}.disabled" "$CNF_CONF"; fi
 }
 
-# ===== Packages (UNCHANGED) =====
-echo -e "${Y}📦 Packages တင်နေပါတယ် (Nginx နှင့် Certbot ပါဝင်သည်)...${Z}"
+# ===== Packages (MODIFIED: Nginx/Certbot added) =====
+echo -e "${Y}📦 Packages တင်နေပါတယ်...${Z}"
 apt_guard_start
 apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
-apt_packages="curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates nginx certbot python3-certbot-nginx"
-apt-get install -y $apt_packages >/dev/null || {
+# 💡 NEW: nginx, certbot, python3-certbot-nginx ကို ထည့်သွင်းပါ
+apt-get install -y curl ufw jq python3 python3-flask python3-apt iproute2 conntrack ca-certificates nginx certbot python3-certbot-nginx >/dev/null || {
   apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt >/dev/null || true
-  apt-get install -y $apt_packages >/dev/null
+  apt-get install -y curl ufw jq python3 python3-flask iproute2 conntrack ca-certificates nginx certbot python3-certbot-nginx >/dev/null
 }
 apt_guard_end
 
 # stop old services
 systemctl stop zivpn.service 2>/dev/null || true
 systemctl stop zivpn-web.service 2>/dev/null || true
-systemctl stop nginx 2>/dev/null || true # Stop Nginx to configure it
+systemctl stop nginx.service 2>/dev/null || true
 
 # ===== Paths and setup directories (unchanged) =====
 BIN="/usr/local/bin/zivpn"
@@ -75,7 +77,11 @@ ENVF="/etc/zivpn/web.env"
 TEMPLATES_DIR="/etc/zivpn/templates" 
 mkdir -p /etc/zivpn "$TEMPLATES_DIR" 
 
-# --- ZIVPN Binary, Config (UNCHANGED) ---
+# 💡 NEW: Nginx/Domain variables
+NGINX_CONF="/etc/nginx/sites-available/zivpn-panel.conf"
+DOMAIN="zivpn.web-panel.dtac68.shop" # 💡 တောင်းဆိုထားသော domain
+
+# --- ZIVPN Binary, Config, Certs (UNCHANGED) ---
 echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
 PRIMARY_URL="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
 FALLBACK_URL="https://github.com/zahidbd2/udp-zivpn/releases/latest/download/udp-zivpn-linux-amd64"
@@ -92,17 +98,47 @@ if [ ! -f "$CFG" ]; then
   curl -fsSL -o "$CFG" "https://raw.githubusercontent.com/zahidbd2/udp-zivpn/main/config.json" || echo '{}' > "$CFG"
 fi
 
-# 💡 REMOVED: SSL စိတျဖိုင်တွေ ဖန်တီးတဲ့အပိုင်းကို ဖယ်ရှားလိုက်ပါသည် (Nginx/Certbot ဖြင့် အစားထိုးမည်)
-rm -f /etc/zivpn/zivpn.crt 2>/dev/null || true
-rm -f /etc/zivpn/zivpn.key 2>/dev/null || true
+if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
+  echo -e "${Y}🔐 SSL စိတျဖိုင်တွေ ဖန်တီးနေပါတယ်...${Z}"
+  openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+    -subj "/C=MM/ST=Yangon/L=Yangon/O=M-69P/OU=Net/CN=zivpn" \
+    -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
+fi
+
+# 💡 NEW: Nginx Config Setup (HTTP Only for Certbot Pre-run)
+echo -e "${Y}⚙️ Nginx Config (${DOMAIN}) ကို စတင်ပြင်ဆင်နေပါတယ်...${Z}"
+cat >"$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+
+    location / {
+        # 💡 Flask/Web Panel ကို Port 8081 သို့ လှမ်းပို့သည် (Certbot အတွက် HTTP 80 မှ)
+        proxy_pass http://127.0.0.1:8081; 
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+# Nginx config ကို sites-enabled သို့ link ချိတ်ခြင်း
+ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/zivpn-panel.conf"
+rm -f "/etc/nginx/sites-enabled/default" 2>/dev/null || true # default ကို ဖျက်ခြင်း
+systemctl daemon-reload
+systemctl restart nginx.service 2>/dev/null || true
+systemctl enable nginx.service 2>/dev/null || true
 
 
-# --- Web Admin Login, VPN Passwords, config.json Update (UNCHANGED logic) ---
+# --- Web Admin Login, VPN Passwords, config.json Update, systemd: ZIVPN (UNCHANGED logic) ---
 echo -e "${G}🔒 Web Admin Login UI ထည့်မလား..?${Z}"
 read -r -p "Web Admin Username (Enter=disable): " WEB_USER
 if [ -n "${WEB_USER:-}" ]; then
+  # 💡 ပြင်ဆင်ပြီး: -s (silent) ကို ဖျက်လိုက်သဖြင့် Password ရိုက်ထည့်ရင် စာပေါ်မည်။
   read -r -p "Web Admin Password: " WEB_PASS; echo
   
+  # 💡 NEW: Contact Link ကို မေးမြန်းခြင်း
   echo -e "${G}🔗 Login အောက်နားတွင် ပြသရန် ဆက်သွယ်ရန် Link (Optional)${Z}"
   read -r -p "Contact Link (ဥပမာ: https://m.me/taknds69 or Enter=disable): " CONTACT_LINK
   
@@ -118,6 +154,7 @@ PY_SECRET
     echo "WEB_ADMIN_USER=${WEB_USER}"
     echo "WEB_ADMIN_PASSWORD=${WEB_PASS}"
     echo "WEB_SECRET=${WEB_SECRET}"
+    # 💡 NEW: Contact Link ကို web.env ထဲသို့ ထည့်ခြင်း
     echo "WEB_CONTACT_LINK=${CONTACT_LINK:-}" 
   } > "$ENVF"
   chmod 600 "$ENVF"
@@ -137,19 +174,18 @@ fi
 
 if jq . >/dev/null 2>&1 <<<'{}'; then
   TMP=$(mktemp)
-  # 💡 MODIFIED: config.json တွင် cert/key လမ်းကြောင်းများကို ဖယ်ရှားလိုက်သည်
   jq --argjson pw "$PW_LIST" '
     .auth.mode = "passwords" |
     .auth.config = $pw |
     .listen = (."listen" // ":5667") |
-    .obfs = (."obfs" // "zivpn") |
-    del(.cert) | del(.key) 
+    .cert = (."cert" // "/etc/zivpn/zivpn.crt") |
+    .key  = (."key" // "/etc/zivpn/zivpn.key") |
+    .obfs = (."obfs" // "zivpn")
   ' "$CFG" > "$TMP" && mv "$TMP" "$CFG"
 fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
 
-# --- systemd: ZIVPN (UNCHANGED) ---
 echo -e "${Y}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${Z}"
 cat >/etc/systemd/system/zivpn.service <<'EOF'
 [Unit]
@@ -172,73 +208,32 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 ULTIMATE FIX 1: zivpn-web.service - ExecStart ကို ပြင်ဆင်ခြင်း
-echo -e "${Y}🧰 systemd service (zivpn-web) ကို သွင်းနေပါတယ်...${Z}"
+# 💡 MODIFIED: ZIVPN Web Panel systemd (Port 8081 ကို အသုံးပြုရန်)
+echo -e "${Y}🧰 systemd service (zivpn-web) ကို ပြင်ဆင်နေပါတယ်...${Z}"
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
-Description=ZIVPN Web Panel (Behind Nginx)
+Description=ZIVPN Web Panel (Flask/Admin UI)
 After=network.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/etc/zivpn
-# 💡 ExecStart: Python3 ကို 0.0.0.0:8080 (HTTP) တွင် run ပါ။ (Nginx Reverse Proxy အတွက်)
-ExecStart=/usr/bin/python3 /etc/zivpn/web.py --host=0.0.0.0
+# 💡 Port 8081 ကို အသုံးပြုရန်
+ExecStart=/usr/bin/python3 /etc/zivpn/web.py 
 Restart=always
 RestartSec=5
 EnvironmentFile=-/etc/zivpn/web.env
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 💡 ULTIMATE FIX 2: NGINX VIRTUAL HOST CONFIGURATION - Port 80 ကို Redirect Block အဖြစ် ပြောင်းလဲခြင်း
-DOMAIN="Zivpn.web-panel.dtac68.shop"
-NGINX_CONF="/etc/nginx/sites-available/zivpn_panel_config"
 
-echo -e "${Y}🖥️ Nginx Reverse Proxy Config (${DOMAIN}) ကို ဖန်တီးနေပါတယ်...${Z}"
-
-cat >"$NGINX_CONF" <<NGINX_TPL
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${DOMAIN};
-    
-    # 💡 ULTIMATE FIX: Certbot SSL Verification ကို ခွင့်ပြုရန်
-    location ~ /.well-known/acme-challenge {
-        allow all;
-        root /var/www/html;
-    }
-    
-    # 💡 ULTIMATE FIX: HTTP မှ HTTPS သို့ အမြဲ Redirect လုပ်ရန်
-    return 301 https://\$host\$request_uri;
-
-    # Port 443 HTTPS Block ကို Certbot မှ ဖန်တီးပေးပါလိမ့်မည်။
-    # Certbot ၏ command ကို run ပြီးပါက ဤဖိုင်ကို အောက်ပါအတိုင်း ပြောင်းလဲသွားပါမည်။
-    # server {
-    #     listen 443 ssl;
-    #     server_name ${DOMAIN};
-    #     ... (SSL configs) ...
-    #     location / {
-    #         proxy_pass http://127.0.0.1:8080;
-    #         ... (Proxy Headers) ...
-    #     }
-    # }
-}
-NGINX_TPL
-
-# Nginx config ကို enable လုပ်ခြင်း
-if [ ! -L /etc/nginx/sites-enabled/zivpn_panel_config ]; then
-    # 💡 FIX: Default config ကို အရင်ဆုံး ဖယ်ရှားပါ (Conflicting error မဖြစ်စေရန်)
-    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-    ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
-fi
-
-# 💡 Template Files (users_table.html, users_table_wrapper.html) ကို ဖြည့်သွင်းခြင်း
-# (Template code is assumed to be correct based on the long input)
-echo -e "${Y}📄 HTML Template များကို template directory ထဲသို့ ရေးနေပါတယ်...${Z}"
-# --- Start of users_table.html ---
+# 💡 MODIFIED: users_table.html (No change required for HTTPS/Nginx)
+echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
     <table>
@@ -388,7 +383,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
   </div>
 </div>
 
-{# 💡 NEW: EXPIRES EDIT MODAL #}
+{# 💡 NEW: EXPIRES EDIT MODAL (MODIFIED: max-width removed to inherit from CSS) #}
 <div id="expiresModal" class="modal">
   <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
     <span class="close-btn" onclick="document.getElementById('expiresModal').style.display='none'">&times;</span>
@@ -415,8 +410,9 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     </form>
   </div>
 </div>
+{# 💡 END NEW EXPIRES EDIT MODAL #}
 
-{# 💡 NEW: LIMIT EDIT MODAL #}
+{# 💡 NEW: LIMIT EDIT MODAL (MODIFIED: max-width removed to inherit from CSS) #}
 <div id="limitModal" class="modal">
   <div class="modal-content"> {# Removed style="max-width: 350px;" to use default 320px from CSS #}
     <span class="close-btn" onclick="document.getElementById('limitModal').style.display='none'">&times;</span>
@@ -443,6 +439,7 @@ cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
     </form>
   </div>
 </div>
+{# 💡 END NEW LIMIT EDIT MODAL #}
 
 
 <style>
@@ -676,9 +673,9 @@ tr.over-limit {
     }
 </script>
 TABLE_HTML
-# --- End of users_table.html ---
 
-# --- Start of users_table_wrapper.html ---
+# 💡 Mobile Friendly: users_table_wrapper.html (MODIFIED: style for new column)
+echo -e "${Y}📄 Table Wrapper (users_table_wrapper.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table_wrapper.html" <<'WRAPPER_HTML'
 <!doctype html>
 <html lang="my"><head><meta charset="utf-8">
@@ -987,6 +984,7 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
         </div>
     </header>
     
+{# 💡 users_table_wrapper.html တွင် error message ပြသခြင်း ထပ်ပေါင်းထည့်ရန် #}
 {% if err %}
 <div class="boxa1">
     <div class="err" style="text-align: center;">{{ err }}</div>
@@ -1012,11 +1010,9 @@ tr.over-limit { border-left: 5px solid var(--danger); background-color: rgba(220
 
 </body></html>
 WRAPPER_HTML
-# --- End of users_table_wrapper.html ---
 
-
-# 💡 ULTIMATE FIX 3: Web Panel (Flask - web.py) - app.run ကို 0.0.0.0 သို့ ပြင်ဆင်ခြင်း
-echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ် (SSL ဖယ်ရှားထားသည်)...${Z}"
+# 💡 Web Panel (Flask - web.py) (MODIFIED: Port 8081)
+echo -e "${Y}🖥️ Web Panel (web.py) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >/etc/zivpn/web.py <<'PY'
 from flask import Flask, jsonify, render_template, render_template_string, request, redirect, url_for, session, make_response
 import json, re, subprocess, os, tempfile, hmac
@@ -1029,7 +1025,9 @@ LOGO_URL = "https://zivpn-web.free.nf/zivpn-icon.png"
 
 def get_server_ip():
     try:
+        # Use a more reliable method to get the primary, external IP if possible
         result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, check=True)
+        # 💡 FIX: Split by space, take the first IP, and trim
         ip = result.stdout.strip().split()[0]
         if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
             return ip
@@ -1038,16 +1036,262 @@ def get_server_ip():
     return "127.0.0.1" 
 
 SERVER_IP_FALLBACK = get_server_ip()
+# 💡 NEW: Contact Link ကို Environment ကနေ ယူခြင်း
 CONTACT_LINK = os.environ.get("WEB_CONTACT_LINK", "").strip()
 
-# 💡 HTML (UNCHANGED)
+# 💡 HTML Template အဓိကဖိုင် (MODIFIED for Contact Link and New Input Field)
 HTML = """<!doctype html>
 <html lang="my"><head><meta charset="utf-8">
 <title>ZIVPN User Panel</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="120">
 <style>
-/* ... (CSS Styles from your original script) ... */
+/* Global Styles */
+:root {
+    --primary: #ff7f27; /* 💡 Color Change: Orange */
+    --primary-dark: #cc661f; /* Darker shade for active/hover state */
+    --secondary: #6c757d; --success: #28a745; --danger: #dc3545;
+    --light: #f8f9fa; --dark: #343a40; --bg-color: #f0f2f5; --card-bg: #ffffff;
+    --border-color: #dee2e6;
+    --warning: #ffc107; 
+}
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color);
+    line-height: 1.6; color: var(--dark); margin: 0; padding: 0;
+    padding-bottom: 70px; 
+}
+.icon { font-style: normal; margin-right: 5px; }
+
+/* Header/Logo Only */
+.main-header {
+    display: flex; justify-content: space-between; align-items: center;
+    background-color: var(--card-bg); padding: 10px 15px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 15px; position: sticky; top: 0; z-index: 1000;
+}
+.header-logo a { font-size: 1.6em; font-weight: bold; color: var(--primary); text-decoration: none;} 
+.header-logo .highlight { color: var(--dark); }
+
+/* 💡 Mobile Bottom Navigation */
+.bottom-nav {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: var(--card-bg);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    padding: 5px 0;
+}
+.bottom-nav a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-decoration: none;
+    color: var(--secondary);
+    font-size: 0.75em;
+    padding: 8px;
+    border-radius: 6px;
+    transition: color 0.2s, background-color 0.2s;
+    min-width: 80px;
+}
+.bottom-nav a:hover, .bottom-nav a.active {
+    color: var(--primary); 
+}
+.bottom-nav a i.icon {
+    font-size: 1.2em;
+    margin-right: 0;
+    margin-bottom: 3px;
+    color: #ffd966; 
+}
+.bottom-nav a:hover i.icon, .bottom-nav a.active i.icon {
+    color: var(--primary); 
+}
+@media (min-width: 769px) {
+    .bottom-nav { display: none; }
+    body { padding-bottom: 0; }
+}
+
+/* Login/Form Styles - Enhanced UI */
+.login-container, .boxa1 {
+    background-color: var(--card-bg); 
+    padding: 30px 20px; 
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15); 
+    width: 90%; max-width: 400px;
+    margin: 30px auto;
+    text-align: center;
+}
+.boxa1 {
+    max-width: 600px;
+    margin-top: 15px;
+    text-align: left;
+}
+
+
+/* New: Info Card for total users */
+.info-card {
+    background-color: #fcece3; 
+    color: var(--primary-dark);
+    padding: 15px 20px;
+    border-radius: 8px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 1.0em; 
+    margin-bottom: 15px;
+    border: 1px solid var(--primary);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+/* 💡 ပြင်ဆင်ချက်: စုစုပေါင်းအရေအရေအတွက် (Total Users) ကို စာလုံးသေးပေးလိုက်သည် */
+.info-card span {
+    font-size: 1.1em; 
+    margin-right: 5px;
+}
+
+.profile-image-container {
+    display: inline-block; margin-bottom: 15px; border-radius: 50%;
+    overflow: hidden; border: 4px solid var(--primary); 
+}
+.profile-image { width: 70px; height: 70px; object-fit: cover; display: block; }
+h1 { font-size: 22px; color: var(--dark); margin-bottom: 5px; }
+.panel-title { font-size: 14px; color: var(--secondary); margin-bottom: 25px; }
+/* 💡 New: Login IP Display Style */
+.login-ip-display {
+    font-size: 16px;
+    color: var(--primary-dark);
+    font-weight: bold;
+    margin-top: -15px; 
+    margin-bottom: 25px; 
+}
+
+/* Input Fields with Icons/Design */
+.input-group { 
+    margin-bottom: 15px; 
+    text-align: left;
+}
+.input-field-wrapper {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-Top: 5px; 
+    background-color: #fff;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+.input-field-wrapper:focus-within {
+    border-color: var(--primary); 
+    box-shadow: 0 0 0 3px rgba(255, 127, 39, 0.25); 
+}
+.input-field-wrapper .icon {
+    padding: 0 10px;
+    color: var(--secondary);
+    background: transparent; 
+}
+input[type="text"], input[type="password"], input[name="expires"], input[name="port"], input[name="ip"], input[type="number"] {
+    width: 100%;
+    padding: 12px 10px;
+    border: none; 
+    border-radius: 0 8px 8px 0;
+    font-size: 16px;
+    outline: none;
+    background: transparent; 
+    appearance: none; 
+    -webkit-appearance: none;
+}
+input[name="ip"] {
+    background-color: var(--light);
+    color: var(--secondary);
+    cursor: pointer; 
+}
+/* 💡 Button Color and Hover/Active State */
+.login-button, .save-btn {
+    width: 100%; padding: 12px; 
+    background-color: var(--primary); 
+    color: white; border: none; border-radius: 8px; font-size: 16px;
+    cursor: pointer; transition: background-color 0.3s; margin-top: 20px; font-weight: bold;
+}
+.login-button:hover, .save-btn:hover { background-color: var(--primary-dark); } 
+.login-button:active, .save-btn:active { background-color: var(--primary-dark); transform: translateY(1px); } 
+
+
+.section-title { font-size: 18px; font-weight: bold; color: var(--dark); margin-bottom: 15px; }
+.row{display:flex;gap:15px;flex-wrap:wrap;margin-bottom: 5px;}
+.row>div{flex:1 1 100%;}
+@media (min-width: 600px) {
+    .row>div{flex:1 1 220px;}
+}
+/* 💡 Error Message Style (For Login) */
+.err{
+    color: var(--danger); 
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 15px; 
+    font-weight: bold;
+    text-align: center;
+}
+
+.user-info-card {
+    position: fixed; 
+    top: 20px; 
+    left: 50%; 
+    transform: translateX(-50%); 
+    
+    background-color: #d4edda;
+    color: #155724; 
+    border: 1px solid #c3e6cb; 
+    border-radius: 8px;
+    padding: 15px 20px; 
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    z-index: 2000; 
+    max-width: 300px; 
+    width: 90%; 
+    text-align: left;
+}
+
+
+@keyframes fadein {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeout {
+    from { opacity: 1; }
+    to { opacity: 0; visibility: hidden; }
+}
+/* New: Copy Success Message Style */
+#copy-notification {
+    position: fixed; top: 10px; right: 50%; transform: translateX(50%);
+    background-color: var(--success); color: white; padding: 8px 15px;
+    border-radius: 5px; z-index: 2000; font-size: 0.9em;
+    opacity: 0; transition: opacity 0.5s;
+}
+
+text {
+  
+  font-size: 15px;
+  margin-Top: 0px;
+}
+/* 💡 NEW: Contact Link Style */
+.contact-link {
+    margin-top: 15px;
+    font-size: 0.9em;
+    font-weight: 500;
+}
+.contact-link a {
+    color: var(--primary-dark);
+    text-decoration: none;
+    font-weight: bold;
+    transition: color 0.2s;
+}
+.contact-link a:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
 </style>
 <script>
     // 💡 ULTIMATE FIX: JavaScript function for copy-to-clipboard with Fallback (Re-applied)
@@ -1079,8 +1323,12 @@ HTML = """<!doctype html>
     function fallbackCopy(copyText, onSuccess) {
         let isCopied = false;
         try {
+            // Select the text field
             copyText.select();
+            // For mobile devices: ensure the selection range covers all text
             copyText.setSelectionRange(0, 99999); 
+            
+            // Copy the text inside the text field
             isCopied = document.execCommand('copy');
 
             if (isCopied) {
@@ -1121,12 +1369,14 @@ HTML = """<!doctype html>
                 <label for="password" style="display:none;">Password</label>
                 <div class="input-field-wrapper">
                     <i class="icon">🔒</i>
+                    {# 💡 FIX: Change type="password" to type="text" to display password #}
                     <input type="text" id="password" name="p" placeholder="Password" required> 
                 </div>
             </div>
             <button type="submit" class="login-button">Login</button>
         </form>
         
+        {# 💡 NEW: Contact Link ကို ဒီမှာ ထည့်သွင်းပြသခြင်း #}
         {% if contact_link %}
         <p class="contact-link"><i class="icon">🗨️</i><a href="{{ contact_link }}" target="_blank">Admin ကို ဆက်သွယ်ပါ</a></p>
         {% endif %}
@@ -1151,16 +1401,18 @@ HTML = """<!doctype html>
             if (data.user) { 
                 const card = document.createElement('div');
                 card.className = 'user-info-card';
+                // Check if the message is from /edit or /edit_expires or /edit_limit route
                 if (data.message) {
                     card.innerHTML = data.message;
                 } else {
+                    // Message from /add route
                     card.innerHTML = `
                         <h4>✅ အကောင့်အသစ် ဖန်တီးပြီးပါပြီ</h4>
                         <p><i class="icon">🔥</i> Server IP: <b>${data.ip || '{{ IP }}'}</b></p>  
                         <p><i class="icon">👤</i> Username: <b>${data.user}</b></p>
                         <p><i class="icon">🔑</i> Password: <b>${data.password}</b></p>
                         <p><i class="icon">⏰</i> Expires: <b>${data.expires || 'N/A'}</b></p>
-                        <p><i class="icon">👥</i> Limit: <b>${data.limit_count || '1'}</b></p>
+                        <p><i class="icon">👥</i> Limit: <b>${data.limit_count || '1'}</b></p> {# 💡 Added Limit Count #}
                     `;
                 }
                 
@@ -1206,6 +1458,7 @@ HTML = """<!doctype html>
             </div></tak1>
             </div>
             
+            {# 💡 NEW INPUT FIELD: Limit Count #}
             <div>
             <text> <label><i class="icon"></i>User Limit Count</label></text>
             <div class="input-field-wrapper">
@@ -1246,11 +1499,12 @@ HTML = """<!doctype html>
 
 app = Flask(__name__, template_folder="/etc/zivpn/templates")
 
+# Secret & Admin credentials (via env)
 app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
 ADMIN_USER = os.environ.get("WEB_ADMIN_USER","M-69P").strip()
 ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","M-69P").strip()
 
-# Flask Helper Functions (unchanged logic)
+# Flask Helper Functions 
 def read_json(path, default):
   try:
     with open(path,"r") as f: return json.load(f)
@@ -1273,7 +1527,7 @@ def load_users():
                 "password":u.get("password",""),
                 "expires":u.get("expires",""),
                 "port":str(u.get("port","")) if u.get("port","")!="" else "",
-                "limit_count": int(u.get("limit_count", 1)) 
+                "limit_count": int(u.get("limit_count", 1)) # 💡 NEW: Load Limit Count (default to 1)
                 })
   return out
 def save_users(users): write_json_atomic(USERS_FILE, users)
@@ -1294,18 +1548,28 @@ def pick_free_port():
 def has_recent_udp_activity(port):
   if not port: return False
   try:
+    # Check for recent conntrack entries for the specific port
     out=subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
                        shell=True, capture_output=True, text=True).stdout
     return bool(out)
   except Exception:
     return False
 
+# 💡 NEW FUNCTION: Get the number of unique source IPs connected to a user's port
 def get_user_online_count(port):
     if not port: return 0
     try:
+        # Get conntrack entries for the specific port
         result = subprocess.run(f"conntrack -L -p udp 2>/dev/null | grep 'dport={port}\\b'",
                                 shell=True, capture_output=True, text=True).stdout
+        
+        # Regex to find the source IP (src=...) from the conntrack output line
+        # Example output: udp 17 29 src=1.2.3.4 dst=5.6.7.8 sport=5000 dport=6001 [UNREPLIED] src=5.6.7.8 dst=1.2.3.4 sport=6001 dport=5000 [ASSURED] mark=0 zone=0 use=1
+        # The first 'src=' is the client's source IP
         source_ips = re.findall(r'src=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', result)
+        
+        # Count unique IPs that are NOT the server's own IP (to avoid counting NAT loopback or internal communication)
+        # 💡 FIX: get_server_ip() returns a single string, compare against it.
         server_ip_single = SERVER_IP_FALLBACK.split()[0]
         unique_online_ips = set(ip for ip in source_ips if ip != server_ip_single)
 
@@ -1313,15 +1577,17 @@ def get_user_online_count(port):
     except Exception:
         return 0
     
+# Function to get the count of non-expired users
 def get_total_active_users():
     users = load_users()
-    today_date = date.today() 
+    today_date = date.today() # 💡 Use date.today()
     active_count = 0
     for user in users:
         expires_str = user.get("expires")
         is_expired = False
         if expires_str:
             try:
+                # 💡 FIX: Expires date is strictly less than today's date
                 if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                     is_expired = True
             except ValueError:
@@ -1335,18 +1601,25 @@ def is_expiring_soon(expires_str):
     if not expires_str: return False
     try:
         expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
-        today = date.today() 
+        today = date.today() # 💡 Use date.today()
         remaining_days = (expires_date - today).days
+        
+        # 💡 FIX: Yellow pill if it expires on Today or Tomorrow (0 or 1 days left). Expiration day is the LAST valid day.
+        # remaining_days = 0 means it expires TODAY (23:59:59)
+        # remaining_days = 1 means it expires TOMORROW
         return 0 <= remaining_days <= 1
     except ValueError:
         return False
     
+# 💡 NEW FUNCTION: Calculate days remaining
 def calculate_days_remaining(expires_str):
     if not expires_str:
         return None
     try:
         expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
         today = date.today()
+        # The expiration day is the last valid day, so we want to count how many days *including* today
+        # up to the expiration date. 
         remaining = (expires_date - today).days
         return remaining if remaining >= 0 else None
     except ValueError:
@@ -1358,9 +1631,10 @@ def delete_user(user):
     save_users(remaining_users)
     sync_config_passwords(mode="mirror")
     
+# 💡 DELETION LOGIC (Standard): Deletes users whose expiration date is before today (at 00:00:00 of the following day)
 def check_user_expiration():
     users = load_users()
-    today_date = date.today() 
+    today_date = date.today() # 💡 Use date.today()
     users_to_keep = []
     deleted_count = 0
     
@@ -1369,6 +1643,8 @@ def check_user_expiration():
         is_expired = False
         if expires_str:
             try:
+                # 💡 FIX: Delete if expiration date is strictly before today's date
+                # If expires='2025-10-23', it is deleted only on 2025-10-24 (since 2025-10-23 < 2025-10-24 is FALSE)
                 if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                     is_expired = True
             except ValueError:
@@ -1388,18 +1664,23 @@ def sync_config_passwords(mode="mirror"):
   cfg=read_json(CONFIG_FILE,{})
   users=load_users()
   
-  today_date = date.today() 
+  today_date = date.today() # 💡 Use date.today()
   valid_passwords = set()
   for u in users:
       expires_str = u.get("expires")
       is_valid = True
       if expires_str:
           try:
+              # 💡 FIX: Expiration check for VPN Passwords
               if datetime.strptime(expires_str, "%Y-%m-%d").date() < today_date:
                   is_valid = False
           except ValueError:
               is_valid = True 
 
+      # 💡 NEW: Online Count check (Users over limit are NOT removed from passwords.json 
+      # but are visually flagged in the web panel. The actual blocking is done by the firewall/OS 
+      # which is what conntrack tracks. We only remove expired users from the passwords list).
+      
       if is_valid and u.get("password"):
           valid_passwords.add(str(u["password"]))
 
@@ -1417,13 +1698,9 @@ def sync_config_passwords(mode="mirror"):
   cfg["auth"]["mode"]="passwords"
   cfg["auth"]["config"]=new_pw
   cfg["listen"]=cfg.get("listen") or ":5667"
-  # 💡 REMOVED: SSL settings from config.json (Nginx handles it)
+  cfg["cert"]=cfg.get("cert") or "/etc/zivpn/zivpn.crt"
+  cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
   cfg["obfs"]=cfg.get("obfs") or "zivpn"
-  
-  # 💡 Remove cert/key if they exist in config (migration fix)
-  if "cert" in cfg: del cfg["cert"]
-  if "key" in cfg: del cfg["key"]
-
   write_json_atomic(CONFIG_FILE,cfg)
   subprocess.run("systemctl restart zivpn.service", shell=True)
 def login_enabled(): return bool(ADMIN_USER and ADMIN_PASS)
@@ -1435,7 +1712,7 @@ def require_login():
 def prepare_user_data():
     all_users = load_users()
     check_user_expiration() 
-    users = load_users() 
+    users = load_users() # Reload after expiration check
     view=[]
     today_date = date.today()
     for u in users:
@@ -1444,27 +1721,27 @@ def prepare_user_data():
           try: expires_date_obj = datetime.strptime(u.get("expires"), "%Y-%m-%d").date()
           except ValueError: pass
       
-      online_count = get_user_online_count(u.get("port","")) 
-      limit_count = int(u.get("limit_count", 1)) 
-      is_over_limit = online_count > limit_count 
+      online_count = get_user_online_count(u.get("port","")) # 💡 Get online count
+      limit_count = int(u.get("limit_count", 1)) # 💡 Get limit count (default to 1)
+      is_over_limit = online_count > limit_count # 💡 Check if over limit
           
       view.append(type("U",(),{
         "user":u.get("user",""),
         "password":u.get("password",""),
         "expires":u.get("expires",""),
-        "expires_date": expires_date_obj, 
-        "days_remaining": calculate_days_remaining(u.get("expires","")), 
+        "expires_date": expires_date_obj, # 💡 New field for comparison
+        "days_remaining": calculate_days_remaining(u.get("expires","")), # 💡 New field for display
         "port":u.get("port",""),
-        "online_count": online_count, 
-        "limit_count": limit_count, 
-        "is_over_limit": is_over_limit, 
+        "online_count": online_count, # 💡 Online Count
+        "limit_count": limit_count, # 💡 Limit Count
+        "is_over_limit": is_over_limit, # 💡 Over Limit status
         "expiring_soon": is_expiring_soon(u.get("expires","")) 
       }))
     view.sort(key=lambda x:(x.user or "").lower())
     today=datetime.now().strftime("%Y-%m-%d")
     return view, today, today_date
 
-# Flask Routes (Unchanged logic, minor fix on /login for password type)
+# Flask Routes 
 @app.route("/", methods=["GET"])
 def index(): 
     server_ip = SERVER_IP_FALLBACK 
@@ -1474,8 +1751,9 @@ def index():
                                 logo=LOGO_URL, 
                                 err=session.pop("login_err", None),
                                 IP=server_ip,
-                                contact_link=CONTACT_LINK) 
+                                contact_link=CONTACT_LINK) # 💡 Added Contact Link
     
+    # Run expiration check and get the total count
     check_user_expiration()
     total_users = get_total_active_users()
 
@@ -1492,19 +1770,19 @@ def index():
 def users_table_view():
     if not require_login(): return redirect(url_for('login'))
     
-    view, today_str, today_date = prepare_user_data() 
+    view, today_str, today_date = prepare_user_data() # 💡 Get today_date object
     
     msg_data = session.pop("msg", None)
-    err_data = session.pop("err", None) 
+    err_data = session.pop("err", None) # 💡 Get the error data
 
     return render_template("users_table_wrapper.html", 
                            users=view, 
-                           today=today_str, 
-                           today_date=today_date, 
+                           today=today_str, # Passed as string for compatibility (though not used in table)
+                           today_date=today_date, # 💡 Passed as object for comparison in template
                            logo=LOGO_URL, 
                            IP=SERVER_IP_FALLBACK,
                            msg=msg_data, 
-                           err=err_data) 
+                           err=err_data) # 💡 Pass the error data to the template
 
 
 @app.route("/login", methods=["GET","POST"])
@@ -1527,7 +1805,7 @@ def login():
                                 logo=LOGO_URL, 
                                 err=session.pop("login_err", None), 
                                 IP=SERVER_IP_FALLBACK,
-                                contact_link=CONTACT_LINK) 
+                                contact_link=CONTACT_LINK) # 💡 Added Contact Link
 
 @app.route("/logout", methods=["GET"])
 def logout():
@@ -1540,7 +1818,7 @@ def add_user():
   user=(request.form.get("user") or "").strip()
   password=(request.form.get("password") or "").strip()
   expires=(request.form.get("expires") or "").strip()
-  limit_count_str=(request.form.get("limit_count") or "1").strip() 
+  limit_count_str=(request.form.get("limit_count") or "1").strip() # 💡 NEW: Get Limit Count
   port=(request.form.get("port") or "").strip() 
   ip = (request.form.get("ip") or "").strip() or SERVER_IP_FALLBACK
   
@@ -1553,10 +1831,12 @@ def add_user():
     session["err"] = "❌ သုံးစွဲသူအရေအတွက် (Limit) သည် ဂဏန်းသာ ဖြစ်ရပါမည်။"
     return redirect(url_for('index'))
 
+  # 💡 NEW FIX: Myanmar Unicode Check (Myanmar Unicode Range U+1000 to U+109F)
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
   if myanmar_chars_pattern.search(user) or myanmar_chars_pattern.search(password):
       session["err"] = "❌ User Name သို့မဟုတ် Password တွင် မြန်မာစာလုံးများ ပါဝင်၍ မရပါ။ (English, Numbers သာ ခွင့်ပြုသည်)"
       return redirect(url_for('index'))
+  # 💡 END NEW FIX
 
   if expires.isdigit():
     expires=(datetime.now() + timedelta(days=int(expires))).strftime("%Y-%m-%d")
@@ -1578,15 +1858,16 @@ def add_user():
   users=load_users(); replaced=False
   for u in users:
     if u.get("user","").lower()==user.lower():
-      u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break 
+      u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break # 💡 NEW: Update limit_count
   if not replaced:
+    # 💡 NEW FIX: Pick a free port if not provided (Important for conntrack tracking)
     if not port:
         port = pick_free_port()
         if not port:
             session["err"] = "❌ အသုံးပြုရန် Port မရှိတော့ပါ"
             return redirect(url_for('index'))
             
-    users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) 
+    users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
   
   save_users(users)
   sync_config_passwords()
@@ -1596,12 +1877,13 @@ def add_user():
       "password": password,
       "expires": expires,
       "ip": ip,
-      "limit_count": limit_count 
+      "limit_count": limit_count # 💡 Add limit_count to message
   }
   
   session["msg"] = json.dumps(msg_dict)
   return redirect(url_for('index'))
 
+# 💡 NEW ROUTE: Edit Expiration Date
 @app.route("/edit_expires", methods=["POST"])
 def edit_user_expires():
   if not require_login(): return redirect(url_for('login'))
@@ -1612,9 +1894,11 @@ def edit_user_expires():
     session["err"] = "User Name နှင့် Expiration Date အသစ် မပါဝင်ပါ"
     return redirect(url_for('users_table_view'))
   
+  # Convert days to date if a number is provided
   if new_expires.isdigit():
     new_expires=(datetime.now() + timedelta(days=int(new_expires))).strftime("%Y-%m-%d")
 
+  # Validate the date format
   if new_expires:
     try: 
         datetime.strptime(new_expires,"%Y-%m-%d")
@@ -1638,7 +1922,9 @@ def edit_user_expires():
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Expires ကို **{new_expires}** သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
+# 💡 END NEW ROUTE
 
+# 💡 NEW ROUTE: Edit Limit Count
 @app.route("/edit_limit", methods=["POST"])
 def edit_user_limit():
   if not require_login(): return redirect(url_for('login'))
@@ -1670,10 +1956,13 @@ def edit_user_limit():
     return redirect(url_for('users_table_view'))
     
   save_users(users)
+  # No need to restart zivpn, only web panel needs to see the new limit for display/flagging.
   
   session["msg"] = json.dumps({"ok":True, "message": f"<h4>✅ **{user}** ရဲ့ Limit ကို **{new_limit}** ယောက် သို့ ပြောင်းပြီးပါပြီ။</h4>", "user":user})
   return redirect(url_for('users_table_view'))
+# 💡 END NEW ROUTE
 
+# 💡 EXISTING ROUTE: Password Edit Function (MODIFIED for Myanmar Char Check)
 @app.route("/edit", methods=["POST"])
 def edit_user_password():
   if not require_login(): return redirect(url_for('login'))
@@ -1682,12 +1971,16 @@ def edit_user_password():
   
   if not user or not new_password:
     session["err"] = "User Name နှင့် Password အသစ် မပါဝင်ပါ"
+    # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
     return redirect(url_for('users_table_view'))
     
+  # 💡 NEW FIX: Myanmar Unicode Check for New Password
   myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
   if myanmar_chars_pattern.search(new_password):
       session["err"] = "❌ Password အသစ်တွင် မြန်မာစာလုံးများ ပါဝင်၍ မရပါ။ (English, Numbers သာ ခွင့်ပြုသည်)"
+      # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
       return redirect(url_for('users_table_view')) 
+  # 💡 END NEW FIX
 
   users=load_users(); replaced=False
   for u in users:
@@ -1698,6 +1991,7 @@ def edit_user_password():
       
   if not replaced:
     session["err"] = f"❌ User **{user}** ကို ရှာမတွေ့ပါ"
+    # ❌ FIX: users_table_view သို့ redirect ပြန်လုပ်ပါ
     return redirect(url_for('users_table_view'))
     
   save_users(users)
@@ -1741,9 +2035,9 @@ def api_users():
     users = load_users() 
     for u in users: 
       u["expiring_soon"]=is_expiring_soon(u.get("expires",""))
-      u["online_count"]=get_user_online_count(u.get("port","")) 
-      u["limit_count"]=int(u.get("limit_count",1)) 
-      u["is_over_limit"] = u["online_count"] > u["limit_count"] 
+      u["online_count"]=get_user_online_count(u.get("port","")) # 💡 API Update
+      u["limit_count"]=int(u.get("limit_count",1)) # 💡 API Update
+      u["is_over_limit"] = u["online_count"] > u["limit_count"] # 💡 API Update
     return jsonify(users)
   
   if request.method=="POST":
@@ -1752,7 +2046,7 @@ def api_users():
     password=(data.get("password") or "").strip()
     expires=(data.get("expires") or "").strip()
     port=str(data.get("port") or "").strip()
-    limit_count_str=(data.get("limit_count") or "1").strip() 
+    limit_count_str=(data.get("limit_count") or "1").strip() # 💡 NEW: Get Limit Count
 
     try:
       limit_count = int(limit_count_str)
@@ -1762,9 +2056,11 @@ def api_users():
       return jsonify({"ok": False, "err": "invalid limit_count"}), 400
 
     
+    # 💡 NEW FIX: Myanmar Unicode Check for API
     myanmar_chars_pattern = re.compile(r'[\u1000-\u109F]')
     if myanmar_chars_pattern.search(user) or myanmar_chars_pattern.search(password):
         return jsonify({"ok": False, "err": "Myanmar characters not allowed in user or password"}), 400
+    # 💡 END NEW FIX
 
     if expires.isdigit():
       expires=(datetime.now()+timedelta(days=int(expires))).strftime("%Y-%m-%d")
@@ -1775,13 +2071,14 @@ def api_users():
     users=load_users(); replaced=False
     for u in users:
       if u.get("user","").lower()==user.lower():
-        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break 
+        u["password"]=password; u["expires"]=expires; u["port"]=port; u["limit_count"]=limit_count; replaced=True; break # 💡 NEW: Update limit_count
     if not replaced:
+      # 💡 NEW FIX: Pick a free port if not provided (API)
       if not port:
           port = pick_free_port()
           if not port:
               return jsonify({"ok": False, "err": "No free port available"}), 500
-      users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) 
+      users.append({"user":user,"password":password,"expires":expires,"port":port, "limit_count":limit_count}) # 💡 NEW: Add limit_count
     save_users(users)
     sync_config_passwords()
     return jsonify({"ok":True})
@@ -1793,15 +2090,15 @@ def favicon(): return ("",204)
 def handle_405(e): return redirect(url_for('index'))
 
 if __name__ == "__main__":
-  # 💡 ULTIMATE FIX: Nginx reverse proxy အတွက် 0.0.0.0 (all interfaces) တွင် run ပါ။
-  # ExecStart တွင် host=0.0.0.0 ပေးထားပြီးဖြစ်သော်လည်း python app ကို တိုက်ရိုက် run သောအခါ အတွက်လည်း ထည့်သွင်းထားပါသည်။
-  app.run(host=os.environ.get("FLASK_RUN_HOST", "0.0.0.0"), port=8080)
+  # 💡 PORT 8080 မှ 8081 သို့ ပြောင်းလဲခြင်း
+  app.run(host="0.0.0.0", port=8081) 
 PY
 
-
-# ===== FIX: User Limit Enforcement Script + Cron Job (unchanged) =====
+# ===== FIX: User Limit Enforcement Script + Cron Job =====
 LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
-echo -e "${Y}🛡️ User Limit Enforcement Script (limit_enforcer.sh) ကို ဖန်တီးနေပါတယ်...${Z}"
+echo -e "${Y}🛡️ User Limit Enforcement Script (limit_enforcer.sh) ကို ဖန်တီးနေပါတယ် (User ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန်)...${Z}"
+
+# This script runs every minute, clears old rules, and blocks ports where conntrack entries > limit.
 cat >"$LIMIT_ENFORCER_SCRIPT" <<'ENFORCER_SHELL'
 #!/bin/bash
 # ZIVPN User Limit Enforcer - Checks connection count via conntrack and enforces limit via iptables.
@@ -1816,6 +2113,11 @@ SERVER_IP=$(hostname -I | awk '{print $1}') # Get the server's main IP
 get_online_count() {
     local port="$1"
     local server_ip="$2"
+    
+    # 1. List conntrack entries for the specific dport
+    # 2. Filter for the client's source IP (the first 'src=' in the line)
+    # 3. Exclude the server's own IP (in case of NAT loopback/local traffic)
+    # 4. Sort and count unique IPs
     
     conntrack -L -p udp 2>/dev/null | 
     grep "dport=${port}\b" | 
@@ -1879,6 +2181,7 @@ for USER_DATA in $USERS; do
 
         if [ "$ONLINE_COUNT" -gt "$LIMIT" ]; then
             # Block the port if over limit: Add a DROP rule to the custom chain
+            # This DROP rule in the INPUT chain will immediately block new incoming traffic to this port.
             echo "Blocking user ${USER} (Port: ${PORT}, Online: ${ONLINE_COUNT}, Limit: ${LIMIT})" >&2
             iptables -A "$CHAIN_NAME" -p udp --dport "$PORT" -m comment --comment "ZIVPN_LIMIT_BLOCK_${USER}" -j DROP
         fi
@@ -1887,15 +2190,20 @@ done
 
 exit 0
 ENFORCER_SHELL
+
 chmod +x "$LIMIT_ENFORCER_SCRIPT"
-# --- Cron Job Setup (unchanged) ---
+
+# --- Cron Job Setup ---
 echo -e "${Y}⏱️ User Limit Enforcement Cron Job ကို ထည့်သွင်းနေပါတယ် (တစ်မိနစ်လျှင် တစ်ခါ)...${Z}"
+
+# Remove old cron entry if it exists
 crontab -l 2>/dev/null | grep -v "${LIMIT_ENFORCER_SCRIPT}" | crontab - 2>/dev/null || true
+
+# Add new cron entry
 (crontab -l 2>/dev/null; echo "* * * * * ${LIMIT_ENFORCER_SCRIPT} >/dev/null 2>&1") | crontab -
 
-
-# ===== Networking: forwarding + DNAT + MASQ + UFW (MODIFIED: UFW for Nginx) =====
-echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ် (Web: 80, 443 ကို ဖွင့်ထားသည်)...${Z}"
+# ===== Networking: forwarding + DNAT + MASQ + UFW (MODIFIED: UFW for Nginx/Certbot) =====
+echo -e "${Y}🌐 UDP/DNAT + UFW + sysctl အပြည့်ချထားနေပါတယ်...${Z}"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 
@@ -1910,33 +2218,41 @@ iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 
 ufw allow 5667/udp >/dev/null 2>&1 || true
 ufw allow 6000:19999/udp >/dev/null 2>&1 || true
-# 💡 Nginx အတွက် HTTP (80) & HTTPS (443) ကို ဖွင့်ပါ
+# 💡 OLD: ufw allow 8080/tcp >/dev/null 2>&1 || true
+# 💡 NEW: Nginx/Certbot အတွက် 80/443 ကို ဖွင့်ပါ
 ufw allow 80/tcp >/dev/null 2>&1 || true
 ufw allow 443/tcp >/dev/null 2>&1 || true
-# 💡 Port 8080 ကို ပိတ်လိုက်ပါ (127.0.0.1 တွင်သာ run သောကြောင့်)
-ufw delete allow 8080/tcp >/dev/null 2>&1 || true 
 ufw reload >/dev/null 2>&1 || true
 
+# 💡 NEW: Certbot Run (Nginx/SSL)
+echo -e "${Y}🔑 Certbot (Let's Encrypt) ဖြင့် SSL လက်မှတ် တောင်းခံနေပါတယ်...${Z}"
+if command -v certbot >/dev/null 2>&1; then
+    # 💡 certbot --nginx --non-interactive --agree-tos -m <သင့် email> -d <သင့် domain> --redirect
+    certbot --nginx --non-interactive --agree-tos -m admin@example.com -d "$DOMAIN" --redirect
+    if [ $? -eq 0 ]; then
+        echo -e "${G}✅ SSL လက်မှတ်ကို အောင်မြင်စွာ တောင်းခံပြီးပါပြီ! Web Panel ကို HTTPS ဖြင့် အသုံးပြုနိုင်ပါပြီ။${Z}"
+        # 💡 Port 8081 ကို အပြင်မှ ဝင်ရောက်ခွင့် မပြုပါ (Nginx မှသာ Proxy လုပ်မည်)
+        ufw delete allow 8081/tcp >/dev/null 2>&1 || true
+    else
+        echo -e "${R}❌ Certbot မှ SSL လက်မှတ် တောင်းခံရာတွင် အမှားအယွင်းရှိခဲ့ပါသည်။ HTTP ဖြင့်သာ ဆက်လက်ရရှိနိုင်ပါသည်။${Z}"
+    fi
+else
+    echo -e "${R}❌ Certbot ကို ရှာမတွေ့ပါ၊ SSL တပ်ဆင်ခြင်းကို ကျော်လိုက်ပါမည်။${Z}"
+fi
 
 # ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) =====
 echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
-sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh /etc/nginx/sites-available/zivpn_panel_config || true
+sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh /etc/nginx/sites-available/zivpn-panel.conf || true
 
-
-# ===== Enable services =====
+# ===== Enable services (MODIFIED: zivpn-web is 8081, Nginx is enabled) =====
 systemctl daemon-reload
 systemctl enable --now zivpn.service
 systemctl enable --now zivpn-web.service
-# 💡 NEW: Nginx ကို စတင်ခြင်း
-nginx -t >/dev/null 2>&1 && systemctl enable --now nginx
+systemctl restart nginx.service 2>/dev/null || true
 
 IP=$(hostname -I | awk '{print $1}')
 echo -e "\n$LINE\n${G}✅ Done${Z}"
-echo -e "${C}VPN Server :${Z} ${Y}Active${Z}"
-echo -e "${C}Web Panel (HTTP/Nginx) :${Z} ${Y}http://Zivpn.web-panel.dtac68.shop${Z} (Nginx မှ HTTPS သို့ Redirect လုပ်ပါမည်။)"
-echo -e "${C}Web Panel (Fallback) :${Z} ${Y}http://$IP:8080 (Local Only)${Z}"
-echo -e "\n${Y}🚨 နောက်ထပ် အဆင့် (HTTPS ရရှိရန်)🚨${Z}"
-echo -e "${C}အဆင့် ၁: ${Z} သင်၏ **Zivpn.web-panel.dtac68.shop** Domain သည် ဤ Server IP (${IP}) ကို ညွှန်ပြနေကြောင်း သေချာပါစေ။"
-echo -e "${C}အဆင့် ၂: ${Z} အောက်ပါ Command ဖြင့် **Let's Encrypt (Certbot)** ကို run ပါ။"
-echo -e "   ${G}sudo certbot --nginx -d Zivpn.web-panel.dtac68.shop${Z}"
+echo -e "${C}Web Panel (HTTPS) :${Z} ${G}https://$DOMAIN${Z}"
+echo -e "${C}Web Panel (Fallback IP) :${Z} ${Y}http://$IP:8081${Z} (Internal Port)"
+echo -e "${C}Services    :${Z} ${Y}systemctl status|systemctl restart zivpn  •  systemctl status|systemctl restart zivpn-web • systemctl status|systemctl restart nginx${Z}"
 echo -e "$LINE"
