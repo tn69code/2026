@@ -3,7 +3,7 @@
 # ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
 # 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX
 # 💡 MODIFICATION REQUEST: Shorten 'Edit Expires' and 'Edit Limit' buttons & make their Modals the same width as 'Password Edit' modal.
-# 💡 HTTPS MODIFICATION: NGINX + CERTBOT ADDED for zivpn.web-panel.dtac68.shop
+# 💡 HTTPS MODIFICATION: NGINX + CERTBOT ADDED for zivpn.web-panel.tak.today
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -12,7 +12,7 @@ LINE="${B}───────────────────────�
 say(){ 
     echo -e "\n$LINE"
     echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန် ပြင်ဆင်ပြီး)${Z}"
-    echo -e "${C}🚨 Web Panel ကို Nginx/Certbot ဖြင့် HTTPS (https://zivpn.web-panel.dtac68.shop) သို့ ပြောင်းလဲနေပါသည်။${Z}"
+    echo -e "${C}🚨 Web Panel ကို Nginx/Certbot ဖြင့် HTTPS (https://zivpn.web-panel.tak.today) သို့ ပြောင်းလဲနေပါသည်။${Z}"
     echo -e "$LINE"
     echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
@@ -79,7 +79,7 @@ mkdir -p /etc/zivpn "$TEMPLATES_DIR"
 
 # 💡 NEW: Nginx/Domain variables
 NGINX_CONF="/etc/nginx/sites-available/zivpn-panel.conf"
-DOMAIN="zivpn.web-panel.dtac68.shop" # 💡 တောင်းဆိုထားသော domain
+DOMAIN="zivpn.web-panel.tak.today" # 💡 တောင်းဆိုထားသော domain
 
 # --- ZIVPN Binary, Config, Certs (UNCHANGED) ---
 echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
