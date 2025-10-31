@@ -93,7 +93,7 @@ $domain = "zivpn-panel.cc";
         <h2>Cloudflare DNS Record စီမံခန့်ခွဲမှု</h2>
 
         <form action="process.php?action=manage" method="POST">
-            <h3>Record အသစ်ဖန်တီး / Update လုပ်မည်</h3>
+            <h3>Create</h3>
             <label for="subdomain">Subdomain Name:</label>
             <input type="text" id="subdomain" name="subdomain" placeholder="ဥပမာ: svp101" required>
             <span class="domain-suffix">.<?php echo htmlspecialchars($domain); ?></span>
