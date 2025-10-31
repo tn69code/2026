@@ -107,7 +107,7 @@ $domain = "zivpn-panel.cc";
                 <option value="true">On (Proxied)</option>
             </select>
 
-            <input type="submit" value="DNS Record ဖန်တီး / Update လုပ်မည်">
+            <input type="submit" value="DNS Create ">
         </form>
 
         <a href="list.php" class="list-btn">Record များ စာရင်းကြည့်ရန်</a>
