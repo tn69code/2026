@@ -3,8 +3,7 @@
 # ================================== MODIFIED: USER COUNT + EXPIRES EDIT MODAL ==================================
 # 💡 NEW MODIFICATION: Added User Limit Count Feature + ENFORCEMENT FIX
 # 💡 MODIFICATION REQUEST: Shorten 'Edit Expires' and 'Edit Limit' buttons & make their Modals the same width as 'Password Edit' modal.
-# 💡 HTTPS MODIFICATION: NGINX + CERTBOT ADDED for zivpn.web-panel.tak.today
-# 💡 USER MODIFICATION: Added interactive Domain input.
+# 💡 HTTPS MODIFICATION: NGINX + CERTBOT ADDED for sell.zivpn-panel.cc
 set -euo pipefail
 
 # ===== Pretty (CLEANED UP) =====
@@ -13,8 +12,7 @@ LINE="${B}───────────────────────�
 say(){ 
     echo -e "\n$LINE"
     echo -e "${G}ZIVPN UDP Server + Web UI (သက်တမ်းကုန်ဆုံးချိန် Logic နှင့် Status ပြင်ဆင်ပြီး) - (User Limit ထည့်သွင်းပြီး + ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန် ပြင်ဆင်ပြီး)${Z}"
-    # 💡 CHANGED: Domain name will be shown after user input
-    echo -e "${C}🚨 Web Panel ကို Nginx/Certbot ဖြင့် HTTPS သို့ ပြောင်းလဲရန် ပြင်ဆင်နေပါသည်။${Z}" 
+    echo -e "${C}🚨 Web Panel ကို Nginx/Certbot ဖြင့် HTTPS (https://sell.zivpn-panel.cc) သို့ ပြောင်းလဲနေပါသည်။${Z}"
     echo -e "$LINE"
     echo -e "${C}သက်တမ်းကုန်ဆုံးသည့်နေ့ ည ၁၁:၅၉:၅၉ အထိ သုံးခွင့်ပေးပြီးမှ ဖျက်ပါမည်။${Z}\n"
 }
@@ -26,23 +24,6 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
-
-# 💡 NEW SECTION: Get Domain Name from User
-echo -e "${G}🌐 Nginx/Certbot အတွက် အသုံးပြုလိုသော Domain Name ကို ထည့်သွင်းပါ။${Z}"
-echo -e "${Y}⚠️ DNS A/AAAA Record ကို ဤ Server ၏ IP သို့ ဦးစွာ ညွှန်ပြထားရန် လိုအပ်ပါသည်။${Z}"
-read -r -p "Domain Name (ဥပမာ: mypanel.example.com): " CUSTOM_DOMAIN
-
-# Default domain if user input is empty
-if [ -z "${CUSTOM_DOMAIN:-}" ]; then
-    CUSTOM_DOMAIN="zivpn.web-panel.tak.today"
-    echo -e "${Y}ℹ️ Domain မထည့်သွင်းသဖြင့် ပုံမှန် Domain: ${CUSTOM_DOMAIN} ကို အသုံးပြုပါမည်။${Z}"
-fi
-
-# Print the final domain name being used
-echo -e "${G}✅ အသုံးပြုမည့် Domain Name : ${CUSTOM_DOMAIN}${Z}"
-# Set the variable for the rest of the script
-DOMAIN="${CUSTOM_DOMAIN}"
-
 
 # ===== apt guards (unchanged for brevity) =====
 wait_for_apt() {
@@ -88,7 +69,7 @@ systemctl stop zivpn.service 2>/dev/null || true
 systemctl stop zivpn-web.service 2>/dev/null || true
 systemctl stop nginx.service 2>/dev/null || true
 
-# ===== Paths and setup directories (unchanged logic) =====
+# ===== Paths and setup directories (unchanged) =====
 BIN="/usr/local/bin/zivpn"
 CFG="/etc/zivpn/config.json"
 USERS="/etc/zivpn/users.json"
@@ -98,7 +79,7 @@ mkdir -p /etc/zivpn "$TEMPLATES_DIR"
 
 # 💡 NEW: Nginx/Domain variables
 NGINX_CONF="/etc/nginx/sites-available/zivpn-panel.conf"
-# DOMAIN="zivpn.web-panel.tak.today" # 💡 DELETED/MOVED TO USER INPUT SECTION
+DOMAIN="sell.zivpn-panel.cc" # 💡 တောင်းဆိုထားသော domain
 
 # --- ZIVPN Binary, Config, Certs (UNCHANGED) ---
 echo -e "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
@@ -124,7 +105,7 @@ if [ ! -f /etc/zivpn/zivpn.crt ] || [ ! -f /etc/zivpn/zivpn.key ]; then
     -keyout "/etc/zivpn/zivpn.key" -out "/etc/zivpn/zivpn.crt" >/dev/null 2>&1
 fi
 
-# 💡 NEW: Nginx Config Setup (Uses $DOMAIN variable)
+# 💡 NEW: Nginx Config Setup (HTTP Only for Certbot Pre-run)
 echo -e "${Y}⚙️ Nginx Config (${DOMAIN}) ကို စတင်ပြင်ဆင်နေပါတယ်...${Z}"
 cat >"$NGINX_CONF" <<EOF
 server {
@@ -250,7 +231,8 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# 💡 users_table.html (UNCHANGED)
+
+# 💡 MODIFIED: users_table.html (No change required for HTTPS/Nginx)
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
 <div class="table-container">
@@ -2112,7 +2094,7 @@ if __name__ == "__main__":
   app.run(host="0.0.0.0", port=8081) 
 PY
 
-# ===== FIX: User Limit Enforcement Script + Cron Job (UNCHANGED) =====
+# ===== FIX: User Limit Enforcement Script + Cron Job =====
 LIMIT_ENFORCER_SCRIPT="/etc/zivpn/limit_enforcer.sh"
 echo -e "${Y}🛡️ User Limit Enforcement Script (limit_enforcer.sh) ကို ဖန်တီးနေပါတယ် (User ကန့်သတ်ချက် အမှန်တကယ် အလုပ်လုပ်စေရန်)...${Z}"
 
@@ -2242,11 +2224,10 @@ ufw allow 80/tcp >/dev/null 2>&1 || true
 ufw allow 443/tcp >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
-# 💡 NEW: Certbot Run (Nginx/SSL) (Uses $DOMAIN variable)
+# 💡 NEW: Certbot Run (Nginx/SSL)
 echo -e "${Y}🔑 Certbot (Let's Encrypt) ဖြင့် SSL လက်မှတ် တောင်းခံနေပါတယ်...${Z}"
 if command -v certbot >/dev/null 2>&1; then
     # 💡 certbot --nginx --non-interactive --agree-tos -m <သင့် email> -d <သင့် domain> --redirect
-    # 💡 $DOMAIN variable is used here
     certbot --nginx --non-interactive --agree-tos -m admin@example.com -d "$DOMAIN" --redirect
     if [ $? -eq 0 ]; then
         echo -e "${G}✅ SSL လက်မှတ်ကို အောင်မြင်စွာ တောင်းခံပြီးပါပြီ! Web Panel ကို HTTPS ဖြင့် အသုံးပြုနိုင်ပါပြီ။${Z}"
@@ -2259,11 +2240,11 @@ else
     echo -e "${R}❌ Certbot ကို ရှာမတွေ့ပါ၊ SSL တပ်ဆင်ခြင်းကို ကျော်လိုက်ပါမည်။${Z}"
 fi
 
-# ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) (UNCHANGED) =====
+# ===== CRLF sanitize (File တွေ အားလုံး ဖန်တီးပြီးမှ ရှင်းခြင်း) =====
 echo -e "${Y}🧹 CRLF ရှင်းနေပါတယ်...${Z}"
 sed -i 's/\r$//' /etc/zivpn/web.py /etc/systemd/system/zivpn.service /etc/systemd/system/zivpn-web.service /etc/zivpn/templates/users_table.html /etc/zivpn/templates/users_table_wrapper.html /etc/zivpn/limit_enforcer.sh /etc/nginx/sites-available/zivpn-panel.conf || true
 
-# ===== Enable services (MODIFIED: zivpn-web is 8081, Nginx is enabled) (UNCHANGED) =====
+# ===== Enable services (MODIFIED: zivpn-web is 8081, Nginx is enabled) =====
 systemctl daemon-reload
 systemctl enable --now zivpn.service
 systemctl enable --now zivpn-web.service
