@@ -177,9 +177,6 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 WEB_EOF
 # --- END MISSING BLOCK ---
-
-EOF
-
 # 💡 MODIFIED: users_table.html (Added Online Users column, Expires Edit Modal, Limit Count Column, Limit Count Edit Modal)
 echo -e "${Y}📄 Table HTML (users_table.html) ကို စစ်ဆေးနေပါတယ်...${Z}"
 cat >"$TEMPLATES_DIR/users_table.html" <<'TABLE_HTML'
