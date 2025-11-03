@@ -152,26 +152,32 @@ fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
 
-echo -e "${Y}🧰 systemd service (zivpn) ကို သွင်းနေပါတယ်...${Z}"
-cat >/etc/systemd/system/zivpn.service <<'EOF'
+
+
+# --- Web UI systemd: zivpn-web.service (MISSING BLOCK) ---
+echo -e "${Y}🖥️ systemd service (zivpn-web) ကို သွင်းနေပါတယ်...${Z}"
+cat >/etc/systemd/system/zivpn-web.service <<'WEB_EOF'
 [Unit]
-Description=ZIVPN UDP Server
-After=network.target
+Description=ZIVPN Web Panel (Flask UI)
+After=network.target zivpn.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/etc/zivpn
-ExecStart=/usr/local/bin/zivpn server -c /etc/zivpn/config.json
+ExecStart=/usr/bin/python3 /etc/zivpn/web.py
 Restart=always
-RestartSec=3
-Environment=ZIVPN_LOG_LEVEL=info
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+RestartSec=5
+EnvironmentFile=/etc/zivpn/web.env
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
+WEB_EOF
+# --- END MISSING BLOCK ---
+
 EOF
 
 # 💡 MODIFIED: users_table.html (Added Online Users column, Expires Edit Modal, Limit Count Column, Limit Count Edit Modal)
